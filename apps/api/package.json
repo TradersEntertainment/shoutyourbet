@@ -12,10 +12,10 @@
     "@fastify/cors": "^11.0.1",
     "@syb/shared": "workspace:*",
     "fastify": "^5.4.0",
-    "livekit-server-sdk": "^2.13.0"
+    "livekit-server-sdk": "^2.13.0",
+    "tsx": "^4.20.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
-    "tsx": "^4.20.0"
+    "@types/node": "^22.15.0"
   }
 }

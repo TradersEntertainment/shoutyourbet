@@ -34,6 +34,33 @@ pnpm dev               # api :4000, web :3000
 ```
 Geliştirme araçları (`DEV_TOOLS=1`): `GET /debug/alarm?symbol=BTC&pct=-3` odaya sahte alarm atar.
 
+## Railway'e deploy
+Ses **LiveKit Cloud**'da kalır (Railway WebRTC/UDP medya sunucusu için uygun değil). Railway'de iki servis açılır: `api` ve `web`.
+
+1. Railway → **New Project → Deploy from GitHub repo** → bu repo. İki servis oluştur (aynı repo, ikisinde de **Root Directory boş** kalsın, pnpm workspace kökten çözülür).
+2. Her serviste **Settings → Config-as-code → Railway config file**:
+   - api servisi: `apps/api/railway.json`
+   - web servisi: `apps/web/railway.json`
+3. **api servisi → Settings → Region: EU West (Amsterdam) veya Southeast Asia (Singapore).** Binance ABD IP'lerini engeller (HTTP 451); ABD bölgesinde kripto fiyatı gelmez.
+4. Her iki servise **Networking → Generate Domain**.
+5. Değişkenler:
+
+| Servis | Değişken | Değer |
+|---|---|---|
+| api | `LIVEKIT_URL` | `wss://<proje>.livekit.cloud` |
+| api | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | LiveKit Cloud → Settings → Keys |
+| api | `PRICE_MODE` | `live` |
+| api | `SHOUT_HORIZON_SEC` | `900` |
+| web | `NEXT_PUBLIC_API_URL` | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}` (servis adın `api` değilse onu yaz) |
+
+`PORT`'u Railway kendisi verir, ekleme. `DEV_TOOLS` ekleme (prod'da `/debug` kapalı kalsın).
+
+**Notlar**
+- `NEXT_PUBLIC_API_URL` build sırasında gömülür: API domaini değişirse web'i yeniden deploy et.
+- Odalar ve skorlar şimdilik bellekte: api'yi **tek replika** çalıştır; her deploy/restart'ta kullanıcı odaları ve skorlar sıfırlanır (Supabase Faz 2).
+- Yahoo Finance bulut IP'lerini ara ara sınırlayabilir (429) → endeks fiyatı geç gelebilir; kalıcı çözüm Finnhub/Twelve Data provider'ı.
+- Maliyet: iki küçük servis Railway Hobby planına sığar; LiveKit Cloud ücretsiz katmanı ayrıca.
+
 ## Yol haritası
 - **Faz 2**: Expo mobil uygulama (`@livekit/react-native`, dev build gerekir), Supabase'e kalıcı depolama + giriş, gerçek ses efektleri (ElevenLabs), moderasyon paneli.
 - **Faz 3**: talep gelen coin/endeksler, oda içi anketler, "günün balinası" rozetleri, klip paylaşımı.
