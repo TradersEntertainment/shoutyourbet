@@ -32,6 +32,17 @@ class PriceHub {
     const cutoff = Date.now() - windowMs;
     return h.find((p) => p.ts >= cutoff)?.price;
   }
+  /** Downsampled recent history for sparklines: ~points samples over keepMs. */
+  sparkline(points = 40) {
+    const out: Record<string, number[]> = {};
+    for (const [id, h] of this.history) {
+      if (!h.length) continue;
+      const step = Math.max(1, Math.floor(h.length / points));
+      out[id] = h.filter((_, i) => i % step === 0).map((p) => p.price);
+      out[id].push(h[h.length - 1].price);
+    }
+    return out;
+  }
   subscribe(l: Listener) {
     this.listeners.add(l);
     return () => this.listeners.delete(l);

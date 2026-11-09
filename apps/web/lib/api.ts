@@ -58,8 +58,8 @@ export const setNick = (n: string) => safeSet("syb.nick", n);
 export const getHostKey = (room: string) => safeGet(`syb.host.${room}`) ?? undefined;
 export const setHostKey = (room: string, key: string) => safeSet(`syb.host.${room}`, key);
 
-const FUNNY = ["Likide Lider", "Kaldıraç Kemal", "FOMO Fatma", "Short Sinan", "Balina Bülent", "Stop Selin", "Mum Mehmet", "Dip Avcısı Duygu"];
-export const randomNick = () => `${FUNNY[Math.floor(Math.random() * FUNNY.length)]} ${Math.floor(Math.random() * 90 + 10)}`;
+const FUNNY = ["LikideLider", "KaldıraçKemal", "FomoFatma", "ShortSinan", "BalinaBülent", "StopSelin", "MumMehmet", "DipAvcısı"];
+export const randomNick = () => `${FUNNY[Math.floor(Math.random() * FUNNY.length)]}${Math.floor(Math.random() * 90 + 10)}`;
 
 // ---------- live prices ----------
 export function usePrices() {
@@ -77,6 +77,45 @@ export function usePrices() {
     return () => es.close();
   }, []);
   return prices;
+}
+
+export function useRooms(intervalMs = 10_000) {
+  const [rooms, setRooms] = useState<RoomInfo[]>([]);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .rooms()
+        .then((r) => alive && (setRooms(r), setError(false)))
+        .catch(() => alive && setError(true));
+    load();
+    const t = setInterval(load, intervalMs);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [intervalMs]);
+  return { rooms, error };
+}
+
+export function useSparklines() {
+  const [data, setData] = useState<Record<string, number[]>>({});
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      fetch(`${API}/prices/history`)
+        .then((r) => r.json())
+        .then((d) => alive && setData(d))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 10_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  return data;
 }
 
 export function fmtPrice(p?: number) {

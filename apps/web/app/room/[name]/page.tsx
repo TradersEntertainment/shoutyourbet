@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
 import type { RoomInfo } from "@syb/shared";
 import { api, getHostKey, getIdentity, getNick, randomNick, setNick } from "@/lib/api";
 import { RoomView, type Conn } from "@/components/RoomView";
@@ -9,17 +10,22 @@ import { RoomView, type Conn } from "@/components/RoomView";
 export default function RoomPage() {
   const { name } = useParams<{ name: string }>();
   const [me, setMe] = useState<{ identity: string; name: string } | null>(null);
+  const [needNick, setNeedNick] = useState(false);
   const [nickDraft, setNickDraft] = useState("");
   const [state, setState] = useState<{ room: RoomInfo; conn: Conn | null } | { error: string } | null>(null);
 
   useEffect(() => {
     const n = getNick();
     if (n) setMe({ identity: getIdentity(), name: n });
-    else setNickDraft(randomNick());
+    else {
+      setNickDraft(randomNick());
+      setNeedNick(true);
+    }
   }, []);
 
   useEffect(() => {
     if (!me) return;
+    setState(null);
     (async () => {
       try {
         const t = await api.token({ room: name, identity: me.identity, name: me.name, hostKey: getHostKey(name) });
@@ -27,18 +33,18 @@ export default function RoomPage() {
       } catch (e) {
         const err = e as Error & { code?: string };
         if (err.code === "LIVEKIT_NOT_CONFIGURED") {
-          const room = (await api.rooms()).find((r) => r.name === name);
+          const room = (await api.rooms().catch(() => [])).find((r) => r.name === name);
           setState(room ? { room, conn: null } : { error: "Oda bulunamadı" });
         } else setState({ error: err.message });
       }
     })();
   }, [me, name]);
 
-  if (!me)
+  if (needNick && !me)
     return (
-      <main className="center">
+      <div className="gate">
         <form
-          className="card join"
+          className="panel gate-card"
           onSubmit={(e) => {
             e.preventDefault();
             const n = nickDraft.trim().slice(0, 24);
@@ -47,19 +53,33 @@ export default function RoomPage() {
             setMe({ identity: getIdentity(), name: n });
           }}
         >
-          <h2>Odaya girmeden önce bir lakap 🎭</h2>
-          <input value={nickDraft} onChange={(e) => setNickDraft(e.target.value)} maxLength={24} autoFocus />
-          <button className="big">Gir ve bağır</button>
+          <h2>Odaya katıl</h2>
+          <p className="muted small">Odada görünecek lakabını seç. Kayıt gerekmez.</p>
+          <label className="field">
+            <span>Lakap</span>
+            <input value={nickDraft} onChange={(e) => setNickDraft(e.target.value)} maxLength={24} autoFocus />
+          </label>
+          <button className="btn btn-primary full">Katıl</button>
         </form>
-      </main>
+      </div>
     );
-  if (!state) return <main className="center">Odaya ışınlanıyor… 🛸</main>;
+  if (!state)
+    return (
+      <div className="gate muted">
+        <Loader2 className="spin" size={22} /> Odaya bağlanılıyor…
+      </div>
+    );
   if ("error" in state)
     return (
-      <main className="center">
-        <p>😵 {state.error}</p>
-        <Link href="/">Lobiye dön</Link>
-      </main>
+      <div className="gate">
+        <div className="panel gate-card">
+          <h2>Oda açılamadı</h2>
+          <p className="muted">{state.error}</p>
+          <Link href="/" className="btn">
+            Lobiye dön
+          </Link>
+        </div>
+      </div>
     );
-  return <RoomView room={state.room} me={me} conn={state.conn} />;
+  return <RoomView room={state.room} me={me!} conn={state.conn} />;
 }

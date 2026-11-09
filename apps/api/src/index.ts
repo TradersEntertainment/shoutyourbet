@@ -76,6 +76,7 @@ app.post<{ Body: { room?: string; target?: string; reporter?: string; reason?: s
 
 // ---------- prices ----------
 app.get("/prices", async () => hub.snapshot());
+app.get("/prices/history", async () => hub.sparkline());
 
 app.get("/prices/stream", (req, reply) => {
   reply.hijack();

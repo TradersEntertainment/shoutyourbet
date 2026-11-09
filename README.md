@@ -8,7 +8,7 @@ Amaç: komedi, kaos, sohbet, eğlence.
 - **Lobi**: 10 sabit kaos odası (BTC, ETH, SOL, XRP, DOGE, Nasdaq 100, S&P 500, BIST 100, DXY, Altın) canlı fiyatla, kullanıcı odaları, oda açma (açık mikrofon / sahne modu), günlük skor tablosu.
 - **Oda**: LiveKit ile sesli sohbet, konuşanın avatarı titrer, TradingView grafiği, kaos-metre.
 - **🐂 LONG! / 🐻 SHORT!**: sunucu o anki fiyatı kaydeder, odada dev banner çıkar. `SHOUT_HORIZON_SEC` (varsayılan 15 dk) sonra puanlanır: "🎯 kâhin" ya da "💀 REKT".
-- **Soundboard** (korna, REKT, aya!, kasa, ağla, alkış, siren, boing) — WebAudio ile üretiliyor, dosya/lisans yok.
+- **Soundboard** (korna, REKT, aya!, kasa, ağla, alkış, siren, boing) — ElevenLabs ile üretilmiş kısa efektler (`apps/web/public/sfx`), yüklenemezse WebAudio yedeği.
 - **Emoji yağmuru** 🚀💀🐻🐂🤡🔥😂🩸
 - **Ani hareket alarmı**: 60 sn içinde enstrümana özel eşik aşılırsa (kripto ~%1, endeks ~%0.5) siren + ekran sarsıntısı + flaş.
 - **Sahne modu**: host el kaldıranları sahneye alır/indirir, atar. Herkes istediğini sadece kendisi için susturabilir.
@@ -33,6 +33,19 @@ cp .env.example .env   # LiveKit anahtarlarını gir (https://cloud.livekit.io, 
 pnpm dev               # api :4000, web :3000
 ```
 Geliştirme araçları (`DEV_TOOLS=1`): `GET /debug/alarm?symbol=BTC&pct=-3` odaya sahte alarm atar.
+
+## Anahtarlar — nereden alınır?
+Tek zorunlu anahtar **LiveKit** (sesli sohbet). Fiyatlar ve grafik anahtarsız.
+
+| Ne için | Servis | Nasıl alınır | Ücret |
+|---|---|---|---|
+| Sesli sohbet (zorunlu) | **LiveKit Cloud** | cloud.livekit.io → Google/GitHub ile kayıt ol → **Create project** → sol menü **Settings → API Keys** → **Create key**. Ekranda çıkan `URL` (wss://…livekit.cloud), `API Key`, `API Secret` değerlerini `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` olarak gir. Secret bir kez gösterilir, sakla. | Ücretsiz katman başlangıç için yeterli |
+| Kripto fiyatları | Binance public WebSocket | Anahtar gerekmez | Ücretsiz |
+| Endeks fiyatları | Yahoo Finance chart endpoint | Anahtar gerekmez (gecikmeli) | Ücretsiz |
+| Grafik | TradingView widget | Anahtar gerekmez | Ücretsiz |
+| (Faz 2) Kalıcı veri | Supabase | supabase.com → proje → Settings → API | Ücretsiz katman |
+
+Anahtarlar **sadece api servisine** girilir; web'e girilmez (tarayıcıya sızmasın).
 
 ## Railway'e deploy
 Ses **LiveKit Cloud**'da kalır (Railway WebRTC/UDP medya sunucusu için uygun değil). Railway'de iki servis açılır: `api` ve `web`.
@@ -62,7 +75,7 @@ Ses **LiveKit Cloud**'da kalır (Railway WebRTC/UDP medya sunucusu için uygun d
 - Maliyet: iki küçük servis Railway Hobby planına sığar; LiveKit Cloud ücretsiz katmanı ayrıca.
 
 ## Yol haritası
-- **Faz 2**: Expo mobil uygulama (`@livekit/react-native`, dev build gerekir), Supabase'e kalıcı depolama + giriş, gerçek ses efektleri (ElevenLabs), moderasyon paneli.
+- **Faz 2**: Expo mobil uygulama (`@livekit/react-native`, dev build gerekir), Supabase'e kalıcı depolama + giriş, moderasyon paneli.
 - **Faz 3**: talep gelen coin/endeksler, oda içi anketler, "günün balinası" rozetleri, klip paylaşımı.
 
 > Yatırım tavsiyesi değildir. Puanlar sanaldır; uygulama para/ödül içermez.

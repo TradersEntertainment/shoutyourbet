@@ -31,7 +31,7 @@ class MemoryStore {
   officialRooms(): Omit<RoomInfo, "participants">[] {
     return INSTRUMENTS.map((i) => ({
       name: officialRoomName(i.id),
-      title: `${i.emoji} ${i.name} Kaos Odası`,
+      title: `${i.name} Odası`,
       instrumentId: i.id,
       mode: "open" as RoomMode,
       official: true,
