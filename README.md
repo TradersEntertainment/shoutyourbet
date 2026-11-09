@@ -45,7 +45,7 @@ Tek zorunlu anahtar **LiveKit** (sesli sohbet). Fiyatlar ve grafik anahtarsız.
 | Grafik | TradingView widget | Anahtar gerekmez | Ücretsiz |
 | $SHOUT ekonomisi | PostgreSQL | Railway → **+ New → Database → PostgreSQL** (ya da Supabase) → `DATABASE_URL` | Hobby planında |
 | $SHOUT ekonomisi | `SESSION_SECRET` | Kendin üret: `openssl rand -hex 32` | — |
-| $SHOUT token | Solana devnet | `pnpm --filter @syb/api token:create` (aşağıda) | Ücretsiz (devnet) |
+| $SHOUT, $SPEAK, Mikrofon NFT'leri | Solana devnet | `pnpm --filter @syb/api chain:setup` (aşağıda) | Ücretsiz (devnet) |
 
 Anahtarlar **sadece api servisine** girilir; web'e girilmez (tarayıcıya sızmasın).
 
@@ -69,22 +69,52 @@ Kurallar tek dosyada: `packages/shared/src/economy.ts`.
 - Kazançlar zincir dışı bir **defterde** (`ledger`, append-only, idempotent) tutulur; kullanıcı istediğinde hazineden cüzdanına gönderilir. Çekimde cüzdan başına kilit var (paralel istekle çift harcama yok); transfer başarısız olursa bakiye otomatik iade edilir.
 - Cüzdandan ödemeler zincirde doğrulanır: imzalayan, mint, alıcı (hazine) ve tutar birebir kontrol edilir; aynı işlem ikinci kez kullanılamaz.
 
-**Token'ı oluştur (devnet)**
+## Konuşarak kazan: Mikrofon NFT'leri + $SPEAK (StepN modeli)
+StepN'de yürüyerek kazanılıyordu; burada **konuşarak**. StepN ayakkabı satıyordu; burada **mikrofon NFT'si**.
+
+| | |
+|---|---|
+| Mikrofon | Metaplex Core NFT ("ShoutYourBet Mics" koleksiyonu, %5 royalty hazineye). Pazar yerlerinde (Magic Eden, Tensor) alınıp satılabilir. Fabrika kutusu **1000 $SHOUT**. |
+| Tipler | Kondansatör (verim), Dinamik (dayanıklılık), Şerit (şans), Megafon (karizma) |
+| Kalite | Sıradan → Nadir → Ender → Destansı → Efsanevi (stat aralığı, seviye başı puan, enerji bonusu) |
+| Statlar | **Verim**: dakika başı $SPEAK · **Şans**: sürpriz kutu · **Dayanıklılık**: yavaş aşınma · **Karizma**: kalabalık oda bonusu |
+| Enerji | 1 mikrofon → 2, 3 → 4, 9 → 9, 15 → 12, 30 → 20 (+ kalite bonusu). **1 enerji = 5 dk** doğrulanmış konuşma. 6 saatte bir %25 dolar. |
+| $SPEAK | Oyun içi token, **sınırsız arz**. Konuşunca zincir dışı bakiyeye yazılır; çekince zincirde basılır (mint yetkisi hazinede). |
+| Harcama | Seviye atlama ($SPEAK; 5, 10, 15… seviyelerde ayrıca $SHOUT), tamir ($SPEAK), iki mikrofondan yeni mikrofon basma ($SPEAK + $SHOUT, mikrofon başına 7 basım) |
+
+Bütün sayılar tek dosyada: `packages/shared/src/mics.ts`.
+
+**Konuşma nasıl sayılır (hile koruması)**
+- Sunucudaki gizli bir LiveKit katılımcısı (`apps/api/src/talk/bot.ts`, `@livekit/rtc-node`) 3+ kişilik odalara girer, her konuşmacının sesini 16 kHz mono alır.
+- `SpeechAnalyzer` (`apps/api/src/talk/analyzer.ts`) her saniye için karar verir: yeterli ses etkinliği, konuşma aralığında sıfır-geçiş oranı, hece ritminde ses dalgalanması, ünlü/ünsüz değişimi. Sessizlik, sabit ton, beyaz gürültü, açık-kapa bip **sayılmaz** (gerçek seslerle test edildi: konuşma ~%86 sayılıyor).
+- Konuşma sadece odada **en az 2 başka kişi** varken sayılır; takılı mikrofonun zincirdeki sahibi kontrol edilir (satılan mikrofonla kazanılmaz).
+- Tarayıcının "konuşuyorum" bilgisine hiç güvenilmez.
+- Bilinen sınırlama: müzik ve önceden kaydedilmiş konuşma kısmen geçebilir; dinleyici şartı, enerji tavanı ve şikayet bunu sınırlar. Mainnet öncesi: dinleyicilerin farklı cüzdan/cihaz olması, rastgele "söyle" doğrulaması, ses parmak izi.
+
+**Zinciri kur (devnet)**
 ```bash
-pnpm --filter @syb/api token:create
+pnpm --filter @syb/api chain:setup
 ```
-İlk çalıştırmada hazine cüzdanı üretilir. Devnet'in RPC faucet'i kapalı olduğu için komut adresi yazıp durur: o adrese https://faucet.solana.com üzerinden (devnet) 1 SOL gönder ve komutu tekrar çalıştır. Çıktıdaki `SHOUT_MINT` ve `SOLANA_TREASURY_SECRET` değerlerini api'nin ortam değişkenlerine koy. Anahtarlar `.secrets/devnet/` altında kalır (git'e girmez), public adresler `scripts/token/devnet.json`'a yazılır. Token logosu/metadata'sı: `apps/web/public/token/` (URI'yi `TOKEN_METADATA_URI` ile kendi domainine çevir; güncelleme yetkisi hazinede).
+Tek komut, kaldığı yerden devam eder: $SHOUT (sabit arz, basım yetkisi iptal), $SPEAK (sınırsız) ve Mikrofon koleksiyonunu oluşturur. İlk çalıştırmada hazine cüzdanı üretilir; devnet'in RPC faucet'i kapalı olduğu için komut adresi yazıp durur: o adrese https://faucet.solana.com üzerinden (devnet) 1 SOL gönder ve tekrar çalıştır. Çıktıdaki `SHOUT_MINT`, `SPEAK_MINT`, `MIC_COLLECTION` ve `.secrets/devnet/treasury.json` içeriğini (`SOLANA_TREASURY_SECRET`) api'nin ortam değişkenlerine koy. Metadata adresleri `METADATA_BASE_URL` (varsayılan `https://shoutyourbet.app`) altındadır; NFT metadata'sı API'den canlı gelir (`PUBLIC_API_URL/nft/mic/<no>.json`), görseller web'den (`PUBLIC_WEB_URL/mics/...`).
 
 **Lokal test (faucet gerektirmez)**
 ```bash
-solana-test-validator --reset                       # Agave/Solana CLI
-SOLANA_CLUSTER=localnet SOLANA_RPC_URL=http://127.0.0.1:8899 pnpm --filter @syb/api token:create
-# api: DATABASE_URL, SESSION_SECRET, DEV_TOOLS=1, SOLANA_CLUSTER=localnet, SOLANA_RPC_URL, SHOUT_MINT, SOLANA_TREASURY_SECRET
-API_URL=http://localhost:4000 SOLANA_RPC_URL=http://127.0.0.1:8899 pnpm --filter @syb/api exec tsx scripts/e2e-economy.ts   # 24 kontrol
-node apps/web/e2e/wallet.e2e.cjs ./out                                                                                      # tarayıcı: bağlan, imzala, çek, satın al, megafon
+# Solana: Metaplex Core programını devnet'ten klonlayarak
+solana-test-validator --reset --url https://api.devnet.solana.com --clone-upgradeable-program CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d
+SOLANA_CLUSTER=localnet SOLANA_RPC_URL=http://127.0.0.1:8899 pnpm --filter @syb/api chain:setup
+# LiveKit: livekit-server --dev  (LIVEKIT_URL=ws://127.0.0.1:7880, LIVEKIT_API_KEY=devkey, LIVEKIT_API_SECRET=secret)
+# api: DATABASE_URL, SESSION_SECRET, DEV_TOOLS=1, TALK_FLUSH_SEC=10, SOLANA_*, SHOUT_MINT, SPEAK_MINT, MIC_COLLECTION, SOLANA_TREASURY_SECRET
+pnpm --filter @syb/api test                                    # konuşma dedektörü, gerçek ses dosyalarıyla (6 test)
+pnpm --filter @syb/api exec tsx scripts/e2e-economy.ts        # $SHOUT ekonomisi (24 kontrol)
+pnpm --filter @syb/api exec tsx scripts/e2e-mics.ts           # mikrofon NFT, enerji, seviye, tamir, basım, $SPEAK çekme (31 kontrol)
+pnpm --filter @syb/api exec tsx scripts/e2e-talk.ts           # gerçek LiveKit sesi: konuşma kazanır, gürültü ve tek dinleyici kazanmaz
+node apps/web/e2e/wallet.e2e.cjs ./out                         # tarayıcı: cüzdan, çekim, mağaza, megafon
+node apps/web/e2e/mics.e2e.cjs ./out                           # tarayıcı: kutu aç, tak, seviye, puan, sahte mikrofonla odada konuş ve kazan
 ```
 
-> **Hukuki not.** Kullanıcının token yatırıp tahmine girdiği (kazanırsa kaybedenin parasını aldığı) bir model kumar/ikili opsiyon sayılır ve bilerek kurulmadı. Mainnet'e çıkmadan, token'ı satmadan veya bir borsada likidite açmadan önce hukuk görüşü al (Türkiye'de 7518 sayılı kanun / SPK, AB'de MiCA). Çok hesapla ödül toplama (sybil) riski için günlük tavanlar var; mainnet öncesi cüzdan yaşı/SOL bakiyesi şartı veya captcha eklenmeli.
+> **Ekonomik risk.** Kazanmak için satın alma şartı + sınırsız arzlı ödül token'ı, StepN'in 2022'deki çöküşünü yaşatan yapıdır: yeni oyuncu gelişi yavaşlayınca $SPEAK satış baskısı artar, mikrofon talebi düşer. Harcama yolları (seviye, tamir, basım) bunu yavaşlatır ama durdurmaz; fiyatları ve emisyonu metrik izleyerek ayarla.
+
+> **Hukuki not.** Tahmine para yatırılmıyor (kumar modeli bilerek kurulmadı). Ancak **kazanç amacıyla satın alınan NFT** ve satılan token, birçok ülkede menkul kıymet/yatırım sözleşmesi olarak değerlendirilebilir. Mainnet'e çıkmadan, mikrofon veya token satmadan, likidite açmadan önce hukuk görüşü al (Türkiye'de 7518 sayılı kanun / SPK, AB'de MiCA). App Store ve Google Play'in NFT/kripto kuralları da ayrıca kontrol edilmeli.
 
 ## Railway'e deploy
 Ses **LiveKit Cloud**'da kalır (Railway WebRTC/UDP medya sunucusu için uygun değil). Railway'de iki servis açılır: `api` ve `web`.
@@ -110,7 +140,8 @@ Ses **LiveKit Cloud**'da kalır (Railway WebRTC/UDP medya sunucusu için uygun d
 **Notlar**
 - `NEXT_PUBLIC_API_URL` build sırasında gömülür: API domaini değişirse web'i yeniden deploy et.
 - `DATABASE_URL` verildiğinde tahminler, skorlar ve $SHOUT bakiyeleri Postgres'te kalıcıdır. Kullanıcı odaları hâlâ bellekte: api'yi **tek replika** çalıştır.
-- Railway'de api servisine Postgres'i bağla: değişken `DATABASE_URL=${{Postgres.DATABASE_URL}}`, ayrıca `SESSION_SECRET`, `SOLANA_CLUSTER`, `SOLANA_RPC_URL`, `SHOUT_MINT`, `SOLANA_TREASURY_SECRET`.
+- Railway'de api servisine Postgres'i bağla: değişken `DATABASE_URL=${{Postgres.DATABASE_URL}}`, ayrıca `SESSION_SECRET`, `SOLANA_CLUSTER`, `SOLANA_RPC_URL`, `SHOUT_MINT`, `SPEAK_MINT`, `MIC_COLLECTION`, `SOLANA_TREASURY_SECRET`, `PUBLIC_API_URL` (api'nin kendi https adresi) ve `PUBLIC_WEB_URL`.
+- Konuşma botu api servisinin içinde çalışır (ayrı servis gerekmez); LiveKit Cloud anahtarları tanımlıysa kendiliğinden başlar.
 - Yahoo Finance bulut IP'lerini ara ara sınırlayabilir (429) → endeks fiyatı geç gelebilir; kalıcı çözüm Finnhub/Twelve Data provider'ı.
 - Maliyet: iki küçük servis Railway Hobby planına sığar; LiveKit Cloud ücretsiz katmanı ayrıca.
 

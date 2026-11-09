@@ -2,15 +2,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { ArrowDownToLine, ExternalLink, Copy, Check, LogOut, Trophy, ShoppingBag, Gift, Undo2, Wrench, Loader2, TrendingUp, Coins } from "lucide-react";
+import { ArrowDownToLine, ExternalLink, Copy, Check, LogOut, Trophy, ShoppingBag, Gift, Undo2, Wrench, Loader2, TrendingUp, Coins, Mic, Package, ArrowUpCircle, Sparkles } from "lucide-react";
 import { req } from "@/lib/api";
 import { fmtToken, useSession } from "@/lib/session";
 import { explorer, short } from "@/lib/chain";
-import { ShoutCoin } from "@/components/wallet/WalletButton";
+import { ShoutCoin, SpeakCoin } from "@/components/wallet/WalletButton";
 
 interface History {
-  ledger: { amount: number; reason: string; ref: string; created_at: string }[];
-  claims: { id: number; amount: number; status: string; tx_sig: string | null; created_at: string; explorer: string | null }[];
+  ledger: { currency: "SHOUT" | "SPEAK"; amount: number; reason: string; ref: string; created_at: string }[];
+  claims: { id: number; currency: "SHOUT" | "SPEAK"; amount: number; status: string; tx_sig: string | null; created_at: string; explorer: string | null }[];
 }
 
 const REASON: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -20,7 +20,16 @@ const REASON: Record<string, { label: string; icon: React.ReactNode }> = {
   claim_refund: { label: "Çekim iadesi", icon: <Undo2 size={14} className="muted" /> },
   purchase: { label: "Mağaza", icon: <ShoppingBag size={14} className="muted" /> },
   admin: { label: "Hediye", icon: <Gift size={14} className="gold" /> },
+  talk: { label: "Konuşma ödülü", icon: <Mic size={14} className="up" /> },
+  box: { label: "Sürpriz kutu", icon: <Package size={14} className="gold" /> },
+  levelup: { label: "Seviye atlama", icon: <ArrowUpCircle size={14} className="muted" /> },
+  repair: { label: "Tamir", icon: <Wrench size={14} className="muted" /> },
+  mint: { label: "Mikrofon basımı", icon: <Sparkles size={14} className="muted" /> },
+  mint_refund: { label: "Basım iadesi", icon: <Undo2 size={14} className="muted" /> },
+  mic_box: { label: "Mikrofon kutusu", icon: <Package size={14} className="muted" /> },
+  mic_refund: { label: "Kutu iadesi", icon: <Undo2 size={14} className="muted" /> },
 };
+const Coin = ({ c, size = 14 }: { c: "SHOUT" | "SPEAK"; size?: number }) => (c === "SPEAK" ? <SpeakCoin size={size} /> : <ShoutCoin size={size} />);
 
 function CopyAddr({ value }: { value: string }) {
   const [done, setDone] = useState(false);
@@ -44,6 +53,7 @@ export default function WalletPage() {
   const modal = useWalletModal();
   const [hist, setHist] = useState<History | null>(null);
   const [amount, setAmount] = useState("");
+  const [cur, setCur] = useState<"SHOUT" | "SPEAK">("SHOUT");
   const [claiming, setClaiming] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string; link?: string } | null>(null);
   const rules = economy?.rules;
@@ -59,8 +69,8 @@ export default function WalletPage() {
     setMsg(null);
     try {
       const n = Number(amount.replace(",", "."));
-      const r = await req<{ amount: number; signature: string; explorer: string }>("/claims", n > 0 ? { amount: n } : {});
-      setMsg({ ok: true, text: `${fmtToken(r.amount)} $SHOUT cüzdanına gönderildi`, link: explorer("tx", r.signature, tok?.cluster, tok?.rpc) });
+      const r = await req<{ amount: number; signature: string; explorer: string }>("/claims", n > 0 ? { amount: n, currency: cur } : { currency: cur });
+      setMsg({ ok: true, text: `${fmtToken(r.amount)} $${cur} cüzdanına ${cur === "SPEAK" ? "basıldı" : "gönderildi"}`, link: explorer("tx", r.signature, tok?.cluster, tok?.rpc) });
       setAmount("");
       await Promise.all([refresh(), loadHist()]);
     } catch (e) {
@@ -146,6 +156,14 @@ export default function WalletPage() {
             <span className="muted">Cüzdanda (zincir üstü)</span>
             <span className="mono">{fmtToken(me?.onchain)} SHOUT</span>
           </div>
+          {me?.speak != null && (
+            <div className="bc-speak">
+              <SpeakCoin size={26} />
+              <span className="mono">{fmtToken(me.speak)}</span>
+              <span className="muted">SPEAK</span>
+              <span className="muted small bc-speak-chain">cüzdanda {fmtToken(me.onchainSpeak)}</span>
+            </div>
+          )}
           <div className="bc-progress">
             <div className="row-between small">
               <span className="muted">Bugün kazanılan</span>
@@ -163,18 +181,29 @@ export default function WalletPage() {
           <h3>
             <ArrowDownToLine size={15} /> Cüzdanına çek
           </h3>
+          {tok?.speak && (
+            <div className="seg">
+              {(["SHOUT", "SPEAK"] as const).map((c) => (
+                <button key={c} className={cur === c ? "on" : ""} onClick={() => setCur(c)}>
+                  <Coin c={c} /> {c}
+                </button>
+              ))}
+            </div>
+          )}
           <p className="muted small">
-            Bakiyeni Solana cüzdanına gönderiyoruz; işlem ücretini biz öderiz. En az {rules?.minClaim}, günde en fazla {rules?.dailyClaimCap} $SHOUT.
+            {cur === "SHOUT"
+              ? `Bakiyeni Solana cüzdanına gönderiyoruz; işlem ücretini biz öderiz. En az ${rules?.minClaim}, günde en fazla ${rules?.dailyClaimCap} $SHOUT.`
+              : "Konuşarak kazandığın $SPEAK çektiğinde zincirde basılır (en az 10). Oyunda harcamak için bakiyede tutabilirsin."}
           </p>
           <div className="claim-row">
             <input
               inputMode="decimal"
-              placeholder={`Tümü (${fmtToken(me?.balance)})`}
+              placeholder={`Tümü (${fmtToken(cur === "SHOUT" ? me?.balance : me?.speak)})`}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               aria-label="Miktar"
             />
-            <button className="btn btn-primary" disabled={claiming || (me?.balance ?? 0) < (rules?.minClaim ?? 0)} onClick={claim}>
+            <button className="btn btn-primary" disabled={claiming || (cur === "SHOUT" ? (me?.balance ?? 0) < (rules?.minClaim ?? 0) : (me?.speak ?? 0) < 10)} onClick={claim}>
               {claiming ? <Loader2 size={15} className="spin" /> : null} Çek
             </button>
           </div>
@@ -217,7 +246,7 @@ export default function WalletPage() {
                     <td className="muted small">{new Date(r.created_at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}</td>
                     <td className={`r mono ${r.amount >= 0 ? "up" : "muted-strong"}`}>
                       {r.amount > 0 ? "+" : ""}
-                      {fmtToken(r.amount)}
+                      {fmtToken(r.amount)} <Coin c={r.currency ?? "SHOUT"} size={12} />
                     </td>
                   </tr>
                 ))}
@@ -238,7 +267,9 @@ export default function WalletPage() {
                 <tbody>
                   {hist.claims.map((c) => (
                     <tr key={c.id}>
-                      <td className="mono">{fmtToken(c.amount)}</td>
+                      <td className="mono">
+                        {fmtToken(c.amount)} <Coin c={c.currency ?? "SHOUT"} size={12} />
+                      </td>
                       <td>
                         <span className={`tag ${c.status === "sent" ? "ok" : c.status === "failed" ? "bad" : ""}`}>
                           {c.status === "sent" ? "Gönderildi" : c.status === "failed" ? "İade edildi" : "Bekliyor"}

@@ -3,20 +3,39 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { ConnectionProvider, WalletProvider, useWallet } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import bs58 from "bs58";
-import { signInMessage, type ECONOMY, type ShopItem, type TOKEN } from "@syb/shared";
+import { signInMessage, type ECONOMY, type EnergyState, type MICS, type MIC_TYPES, type QUALITIES, type ShopItem, type TOKEN } from "@syb/shared";
 import { getNick, req } from "./api";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 export interface EconomyInfo {
   enabled: boolean;
-  token: (typeof TOKEN) & { mint?: string; treasury?: string; treasuryAta?: string; cluster?: string; rpc?: string; explorer?: string };
+  token: (typeof TOKEN) & {
+    mint?: string;
+    treasury?: string;
+    treasuryAta?: string;
+    cluster?: string;
+    rpc?: string;
+    explorer?: string;
+    speak?: { mint: string; symbol: string; decimals: number; explorer: string } | null;
+    micCollection?: string | null;
+  };
   rules: typeof ECONOMY;
   shop: ShopItem[];
+}
+export interface MicsRules {
+  enabled: boolean;
+  rules: typeof MICS;
+  types: typeof MIC_TYPES;
+  qualities: typeof QUALITIES;
 }
 export interface Me {
   wallet: string;
   nickname: string | null;
   balance: number;
+  speak: number;
+  onchainSpeak: number | null;
+  energy: EnergyState;
+  talkToday: { seconds: number; speak: number };
   earnedToday: number;
   dailyEarnCap: number;
   inventory: Record<string, number>;
@@ -25,6 +44,7 @@ export interface Me {
 
 interface SessionCtx {
   economy: EconomyInfo | null;
+  mics: MicsRules | null;
   wallet: string | null; // connected wallet
   signedIn: boolean; // connected wallet has a valid API session
   me: Me | null;
@@ -52,7 +72,7 @@ const store = (v: { wallet: string; token: string } | null) => {
   } catch {}
 };
 
-function SessionInner({ economy, children }: { economy: EconomyInfo | null; children: React.ReactNode }) {
+function SessionInner({ economy, mics, children }: { economy: EconomyInfo | null; mics: MicsRules | null; children: React.ReactNode }) {
   const { publicKey, signMessage, disconnect } = useWallet();
   const wallet = publicKey?.toBase58() ?? null;
   const [stored, setStored] = useState<{ wallet: string; token: string } | null>(null);
@@ -89,11 +109,12 @@ function SessionInner({ economy, children }: { economy: EconomyInfo | null; chil
     try {
       const { nonce } = await req<{ nonce: string }>("/auth/nonce");
       const sig = await signMessage(new TextEncoder().encode(signInMessage(wallet, nonce)));
-      const r = await req<{ session: string; me: Me }>("/auth/wallet", { wallet, nonce, signature: bs58.encode(sig), nickname: getNick() });
+      const r = await req<{ session: string }>("/auth/wallet", { wallet, nonce, signature: bs58.encode(sig), nickname: getNick() });
       const v = { wallet, token: r.session };
       store(v);
       setStored(v);
-      setMe({ ...r.me, onchain: null });
+      // load the full profile (balances, energy, …) with the new session
+      setMe(await req<Me>("/me").catch(() => null));
     } catch (e) {
       setError((e as Error).message.includes("reject") ? "İmza iptal edildi" : (e as Error).message);
     } finally {
@@ -111,6 +132,7 @@ function SessionInner({ economy, children }: { economy: EconomyInfo | null; chil
   const value = useMemo<SessionCtx>(
     () => ({
       economy,
+      mics,
       wallet,
       signedIn,
       me,
@@ -121,15 +143,17 @@ function SessionInner({ economy, children }: { economy: EconomyInfo | null; chil
       refresh,
       owns: (id) => (me?.inventory[id] ?? 0) > 0,
     }),
-    [economy, wallet, signedIn, me, busy, error, signIn, signOut, refresh],
+    [economy, mics, wallet, signedIn, me, busy, error, signIn, signOut, refresh],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [economy, setEconomy] = useState<EconomyInfo | null>(null);
+  const [mics, setMics] = useState<MicsRules | null>(null);
   useEffect(() => {
     req<EconomyInfo>("/economy").then(setEconomy).catch(() => {});
+    req<MicsRules>("/mics/rules").then(setMics).catch(() => {});
   }, []);
   const endpoint = economy?.token.rpc ?? process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.devnet.solana.com";
   return (
@@ -137,7 +161,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       {/* Phantom, Solflare, Backpack… register themselves via the Wallet Standard */}
       <WalletProvider wallets={[]} autoConnect>
         <WalletModalProvider>
-          <SessionInner economy={economy}>{children}</SessionInner>
+          <SessionInner economy={economy} mics={mics}>
+            {children}
+          </SessionInner>
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

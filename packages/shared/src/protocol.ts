@@ -2,6 +2,7 @@
 export const DATA_TOPIC = "syb";
 
 export type Side = "LONG" | "SHORT";
+export type TalkStatus = "earning" | "few-listeners" | "no-energy" | "no-mic" | "no-wallet" | "broken";
 
 export type DataMsg =
   // client -> room
@@ -13,6 +14,8 @@ export type DataMsg =
   | { t: "SHOUT"; side: Side; price: number; from: string; identity: string; instrumentId: string }
   | { t: "RESULT"; side: Side; pct: number; points: number; from: string; instrumentId: string; reward?: number }
   | { t: "MEGAPHONE"; from: string; text: string; until: number }
+  /** server -> one speaker: talk-to-earn status, sent every flush */
+  | { t: "TALK"; status: TalkStatus; seconds: number; speak: number; energy: number; maxEnergy: number; durability: number | null; box?: number }
   | { t: "ALARM"; instrumentId: string; dir: "up" | "down"; pct: number; price: number };
 
 const enc = new TextEncoder();

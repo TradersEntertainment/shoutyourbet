@@ -6,7 +6,8 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import bs58 from "bs58";
-import { TOKEN } from "@syb/shared";
+import { SPEAK, TOKEN } from "@syb/shared";
+import { createMintToInstruction } from "@solana/spl-token";
 import { env, chainEnabled } from "../env.js";
 
 export const connection = new Connection(env.solanaRpc, "confirmed");
@@ -34,6 +35,32 @@ const clusterQs = () =>
 export const explorerTx = (sig: string) => `https://explorer.solana.com/tx/${sig}${clusterQs()}`;
 export const explorerAccount = (a: string) => `https://explorer.solana.com/address/${a}${clusterQs()}`;
 
+export function loadTreasury() {
+  return loadKeypair(env.treasurySecret);
+}
+
+/** Mint fresh $SPEAK to a wallet (the treasury is the mint authority; supply is unlimited by design). */
+export async function mintSpeakTo(to: string, amountBase: bigint) {
+  const { treasury } = chain();
+  const mint = new PublicKey(env.speakMint);
+  const owner = new PublicKey(to);
+  const dest = ata(mint, owner);
+  const tx = new Transaction().add(
+    createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, dest, owner, mint, TOKEN_2022_PROGRAM_ID),
+    createMintToInstruction(mint, dest, treasury.publicKey, amountBase, [], TOKEN_2022_PROGRAM_ID),
+  );
+  return sendAndConfirmTransaction(connection, tx, [treasury], { commitment: "confirmed" });
+}
+
+export async function onchainSpeak(wallet: string) {
+  if (!env.speakMint) return "0";
+  try {
+    return (await connection.getTokenAccountBalance(ata(new PublicKey(env.speakMint), new PublicKey(wallet)))).value.amount;
+  } catch {
+    return "0";
+  }
+}
+
 export function tokenInfo() {
   if (!chainEnabled()) return null;
   const { mint, treasury, treasuryAta } = chain();
@@ -47,6 +74,8 @@ export function tokenInfo() {
     rpc: env.solanaRpc,
     tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
     explorer: explorerAccount(mint.toBase58()),
+    speak: env.speakMint ? { mint: env.speakMint, symbol: SPEAK.symbol, decimals: SPEAK.decimals, explorer: explorerAccount(env.speakMint) } : null,
+    micCollection: env.micCollection || null,
   };
 }
 

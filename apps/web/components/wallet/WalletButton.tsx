@@ -1,11 +1,29 @@
 "use client";
 import Link from "next/link";
-import { Wallet, PenLine, Loader2 } from "lucide-react";
+import { Wallet, PenLine, Loader2, Zap } from "lucide-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { fmtToken, useSession } from "@/lib/session";
 
 export function ShoutCoin({ size = 16 }: { size?: number }) {
   return <img src="/token/shout.png" width={size} height={size} alt="" className="coin" />;
+}
+
+export function SpeakCoin({ size = 16 }: { size?: number }) {
+  return <img src="/token/speak.png" width={size} height={size} alt="" className="coin" />;
+}
+
+export function EnergyPill() {
+  const { me, mics } = useSession();
+  if (!me?.energy || !mics?.enabled) return null;
+  const { energy, max } = me.energy;
+  return (
+    <Link href="/mics" className={`energy-pill ${max === 0 ? "none" : energy <= 0 ? "empty" : ""}`} title="Enerji: 1 enerji = 5 dakika doğrulanmış konuşma">
+      <Zap size={14} />
+      <span className="mono">
+        {max === 0 ? "—" : `${Number(energy.toFixed(1))}/${max}`}
+      </span>
+    </Link>
+  );
 }
 
 export function WalletButton() {
@@ -25,10 +43,15 @@ export function WalletButton() {
       </button>
     );
   return (
-    <Link href="/wallet" className="bal-chip" title="Kazanılan $SHOUT (çekilebilir)">
-      <ShoutCoin size={18} />
-      <span className="mono">{fmtToken(me?.balance)}</span>
-      <span className="muted small hide-xs">SHOUT</span>
-    </Link>
+    <>
+      <EnergyPill />
+      <Link href="/wallet" className="bal-chip" title="Kazanılan bakiyeler (çekilebilir)">
+        <ShoutCoin size={18} />
+        <span className="mono">{fmtToken(me?.balance)}</span>
+        <span className="bal-sep hide-xs" />
+        <SpeakCoin size={18} />
+        <span className="mono">{fmtToken(me?.speak)}</span>
+      </Link>
+    </>
   );
 }

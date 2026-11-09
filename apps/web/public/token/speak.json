@@ -1,0 +1,7 @@
+{
+  "name": "ShoutYourBet Speak",
+  "symbol": "SPEAK",
+  "description": "ShoutYourBet odalarında konuşarak kazanılan oyun içi token. Sınırsız arz: oyuncular çektikçe basılır; seviye, tamir ve mikrofon basımında harcanır.",
+  "image": "https://shoutyourbet.app/token/speak.png",
+  "external_url": "https://shoutyourbet.app"
+}

@@ -14,6 +14,8 @@ import { TVChart } from "./TVChart";
 import { Leaderboard } from "./Leaderboard";
 import { DataBridge, MicButton, Stage, type TipFn } from "./Voice";
 import { ShoutCoin } from "./wallet/WalletButton";
+import { TalkHud, type TalkState } from "./TalkHud";
+import { playSfx } from "@/lib/sfx";
 import { InstrumentBadge } from "./InstrumentBadge";
 import { Change } from "./Change";
 import { useMarket } from "./shell/market";
@@ -85,6 +87,7 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
   const { connection } = useConnection();
   const walletCtx = useWallet();
   const [megaText, setMegaText] = useState("");
+  const [talk, setTalk] = useState<TalkState>({ last: null, total: 0, at: 0 });
   const megaLeft = session.me?.inventory.megaphone ?? 0;
   const premium = session.owns("pack-degen");
 
@@ -92,6 +95,16 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
 
   const onMsg = useCallback(
     (m: DataMsg) => {
+      if (m.t === "TALK") {
+        setTalk((t) => ({ last: m, total: t.total + m.speak + (m.box ?? 0), at: Date.now() }));
+        if (m.box) {
+          playSfx("cash");
+          setNotice(`📦 Sürpriz kutu! +${m.box} $SPEAK`);
+          setTimeout(() => setNotice(null), 4000);
+        }
+        void session.refresh();
+        return;
+      }
       if (m.t === "RAISE_HAND")
         setHands((h) => {
           const n = { ...h };
@@ -101,7 +114,8 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
         });
       chaos.handle(m);
     },
-    [chaos.handle],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chaos.handle, session.refresh],
   );
 
   // Without LiveKit: server events arrive over SSE so the room is still playable.
@@ -288,6 +302,7 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
 
         <aside className="room-side">
           <section className="panel ticket o-ticket">
+            {conn && <TalkHud talk={talk} />}
             {conn && <MicButton />}
             {conn && room.mode === "stage" && !conn.host && (
               <button

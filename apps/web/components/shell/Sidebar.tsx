@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Headphones, Plus, Mic2, Radio, LayoutGrid, Wallet, ShoppingBag } from "lucide-react";
+import { Headphones, Plus, Mic2, Radio, LayoutGrid, Wallet, ShoppingBag, Mic } from "lucide-react";
 import { INSTRUMENTS, instrumentById, officialRoomName } from "@syb/shared";
 import { fmtPrice } from "@/lib/api";
 import { useMarket } from "./market";
@@ -18,6 +18,7 @@ export function Sidebar({ onCreate, onNavigate }: { onCreate: () => void; onNavi
       <div className="side-nav">
         {[
           { href: "/", label: "Lobi", icon: <LayoutGrid size={16} /> },
+          { href: "/mics", label: "Mikrofonlarım", icon: <Mic size={16} /> },
           { href: "/wallet", label: "Cüzdan", icon: <Wallet size={16} /> },
           { href: "/shop", label: "Mağaza", icon: <ShoppingBag size={16} /> },
         ].map((l) => (

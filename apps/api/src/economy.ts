@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import { ECONOMY, fromBase, shopItem, toBase } from "@syb/shared";
+import { ECONOMY, SPEAK, fromBase, shopItem, toBase } from "@syb/shared";
 import { q, tx } from "./db.js";
 import { chainEnabled } from "./env.js";
-import { explorerTx, sendFromTreasury, verifyPaymentToTreasury } from "./chain/solana.js";
+import { explorerTx, mintSpeakTo, sendFromTreasury, verifyPaymentToTreasury } from "./chain/solana.js";
+import { env } from "./env.js";
+
+export type Currency = "SHOUT" | "SPEAK";
+/** UI amount <-> base units per currency ($SHOUT 6 decimals, $SPEAK 2). */
+export const toUnits = (amount: number, cur: Currency) => (cur === "SHOUT" ? toBase(amount) : BigInt(Math.round(amount * 10 ** SPEAK.decimals)));
+export const fromUnits = (units: bigint | number | string, cur: Currency) => (cur === "SHOUT" ? fromBase(units) : Number(BigInt(units)) / 10 ** SPEAK.decimals);
+export const SPEAK_MIN_CLAIM = 10;
 
 export class EconomyError extends Error {
   constructor(message: string, public status = 400) {
@@ -25,12 +32,25 @@ export async function ensureUser(wallet: string, nickname: string) {
   );
 }
 
-export const balance = (wallet: string, c: pg.PoolClient | null = null) =>
-  sumOf(c, "select coalesce(sum(amount),0) s from ledger where wallet = $1", [wallet]);
+export const balance = (wallet: string, c: pg.PoolClient | null = null, cur: Currency = "SHOUT") =>
+  sumOf(c, "select coalesce(sum(amount),0) s from ledger where wallet = $1 and currency = $2", [wallet, cur]);
 const earnedToday = (wallet: string, c: pg.PoolClient | null = null) =>
-  sumOf(c, "select coalesce(sum(amount),0) s from ledger where wallet = $1 and reason = 'reward' and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'", [wallet]);
-const claimedToday = (wallet: string, c: pg.PoolClient) =>
-  sumOf(c, "select coalesce(sum(amount),0) s from claims where wallet = $1 and status <> 'failed' and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'", [wallet]);
+  sumOf(c, "select coalesce(sum(amount),0) s from ledger where wallet = $1 and currency = 'SHOUT' and reason = 'reward' and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'", [wallet]);
+const claimedToday = (wallet: string, c: pg.PoolClient, cur: Currency) =>
+  sumOf(c, "select coalesce(sum(amount),0) s from claims where wallet = $1 and currency = $2 and status <> 'failed' and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'", [wallet, cur]);
+
+/** Add a ledger row (amount in base units; negative = spend). Use inside tx() with the wallet locked. */
+export async function post(c: pg.PoolClient, wallet: string, cur: Currency, units: bigint, reason: string, ref: string) {
+  return c.query("insert into ledger (wallet, currency, amount, reason, ref) values ($1,$2,$3,$4,$5) on conflict do nothing", [wallet, cur, units.toString(), reason, ref]);
+}
+/** Debit or throw "insufficient". */
+export async function spend(c: pg.PoolClient, wallet: string, cur: Currency, amountUi: number, reason: string, ref: string) {
+  if (amountUi <= 0) return;
+  const units = toUnits(amountUi, cur);
+  if ((await balance(wallet, c, cur)) < units) throw new EconomyError(`Yetersiz $${cur} (gereken ${amountUi})`, 402);
+  await post(c, wallet, cur, -units, reason, ref);
+}
+export const lockWallet = lock;
 
 /** Credit a prediction reward (idempotent per shout, capped per day). Returns UI amount credited. */
 export async function creditReward(wallet: string, shoutId: string, points: number) {
@@ -53,6 +73,7 @@ export async function me(wallet: string) {
     wallet,
     nickname: user?.nickname ?? null,
     balance: fromBase(await balance(wallet)),
+    speak: fromUnits(await balance(wallet, null, "SPEAK"), "SPEAK"),
     earnedToday: fromBase(await earnedToday(wallet)),
     dailyEarnCap: ECONOMY.dailyEarnCap,
     inventory: Object.fromEntries(inv.map((i) => [i.item_id, i.qty])),
@@ -60,38 +81,39 @@ export async function me(wallet: string) {
 }
 
 export async function history(wallet: string) {
-  const rows = await q("select amount, reason, ref, created_at from ledger where wallet = $1 order by id desc limit 50", [wallet]);
-  const claims = await q("select id, amount, status, tx_sig, created_at from claims where wallet = $1 order by id desc limit 20", [wallet]);
+  const rows = await q("select currency, amount, reason, ref, created_at from ledger where wallet = $1 order by id desc limit 80", [wallet]);
+  const claims = await q("select id, currency, amount, status, tx_sig, created_at from claims where wallet = $1 order by id desc limit 20", [wallet]);
   return {
-    ledger: rows.map((r) => ({ ...r, amount: fromBase(r.amount) })),
-    claims: claims.map((r) => ({ ...r, amount: fromBase(r.amount), explorer: r.tx_sig ? explorerTx(r.tx_sig) : null })),
+    ledger: rows.map((r) => ({ ...r, amount: fromUnits(r.amount, r.currency) })),
+    claims: claims.map((r) => ({ ...r, amount: fromUnits(r.amount, r.currency), explorer: r.tx_sig ? explorerTx(r.tx_sig) : null })),
   };
 }
 
-/** Withdraw off-chain balance to the wallet (treasury pays). */
-export async function claim(wallet: string, amountUi?: number) {
+/** Withdraw off-chain balance to the wallet (treasury pays fees). $SHOUT is transferred, $SPEAK is minted. */
+export async function claim(wallet: string, amountUi?: number, cur: Currency = "SHOUT") {
   if (!chainEnabled()) throw new EconomyError("Zincir bağlantısı yapılandırılmamış", 503);
+  if (cur === "SPEAK" && !env.speakMint) throw new EconomyError("$SPEAK yapılandırılmamış", 503);
+  const min = cur === "SHOUT" ? ECONOMY.minClaim : SPEAK_MIN_CLAIM;
   const claim = await tx(async (c) => {
     await lock(c, wallet);
-    const bal = await balance(wallet, c);
-    const amount = amountUi ? toBase(amountUi) : bal;
-    if (amount < toBase(ECONOMY.minClaim)) throw new EconomyError(`En az ${ECONOMY.minClaim} $SHOUT çekebilirsin`);
+    const bal = await balance(wallet, c, cur);
+    const amount = amountUi ? toUnits(amountUi, cur) : bal;
+    if (amount < toUnits(min, cur)) throw new EconomyError(`En az ${min} $${cur} çekebilirsin`);
     if (amount > bal) throw new EconomyError("Bakiye yetersiz");
-    if ((await claimedToday(wallet, c)) + amount > toBase(ECONOMY.dailyClaimCap))
+    if (cur === "SHOUT" && (await claimedToday(wallet, c, cur)) + amount > toBase(ECONOMY.dailyClaimCap))
       throw new EconomyError(`Günlük çekim limiti ${ECONOMY.dailyClaimCap} $SHOUT`);
-    const [row] = (await c.query("insert into claims (wallet, amount, status) values ($1,$2,'pending') returning id", [wallet, amount.toString()])).rows;
-    await c.query("insert into ledger (wallet, amount, reason, ref) values ($1,$2,'claim',$3)", [wallet, (-amount).toString(), String(row.id)]);
+    const [row] = (await c.query("insert into claims (wallet, currency, amount, status) values ($1,$2,$3,'pending') returning id", [wallet, cur, amount.toString()])).rows;
+    await post(c, wallet, cur, -amount, "claim", String(row.id));
     return { id: row.id as number, amount };
   });
   try {
-    const sig = await sendFromTreasury(wallet, claim.amount);
+    const sig = cur === "SHOUT" ? await sendFromTreasury(wallet, claim.amount) : await mintSpeakTo(wallet, claim.amount);
     await q("update claims set status = 'sent', tx_sig = $2 where id = $1", [claim.id, sig]);
-    return { id: claim.id, amount: fromBase(claim.amount), signature: sig, explorer: explorerTx(sig) };
+    return { id: claim.id, currency: cur, amount: fromUnits(claim.amount, cur), signature: sig, explorer: explorerTx(sig) };
   } catch (e) {
-    // give the balance back
     await tx(async (c) => {
       await c.query("update claims set status = 'failed', error = $2 where id = $1", [claim.id, String(e).slice(0, 500)]);
-      await c.query("insert into ledger (wallet, amount, reason, ref) values ($1,$2,'claim_refund',$3) on conflict do nothing", [wallet, claim.amount.toString(), String(claim.id)]);
+      await post(c, wallet, cur, claim.amount, "claim_refund", String(claim.id));
     });
     throw new EconomyError(`Transfer başarısız, bakiye iade edildi: ${String((e as Error).message ?? e).slice(0, 160)}`, 502);
   }

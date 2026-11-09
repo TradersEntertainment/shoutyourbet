@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { randomUUID } from "node:crypto";
 import { ECONOMY, INSTRUMENTS, SHOP, TOKEN, instrumentById, signInMessage, toBase, type RoomInfo, type RoomMode, type Side } from "@syb/shared";
-import { chainEnabled, economyEnabled, env, livekitConfigured } from "./env.js";
+import { chainEnabled, economyEnabled, env, livekitConfigured, micsEnabled } from "./env.js";
 import { broadcast, roomBus, createToken, kick, participantCounts, setCanPublish } from "./livekit.js";
 import { hub, startPrices } from "./prices/index.js";
 import { fireAlarm, startAlarms } from "./alarms.js";
@@ -12,7 +12,11 @@ import { shouts } from "./shouts.js";
 import { migrate, q } from "./db.js";
 import { isWallet, issueSession, newNonce, verifySignIn, walletOf } from "./auth.js";
 import { EconomyError, buyOnChain, buyWithBalance, claim, consume, ensureUser, history, isoWeek, me, owns, paySeason, startSeasonScheduler } from "./economy.js";
-import { onchainBalance, tokenInfo } from "./chain/solana.js";
+import { onchainBalance, onchainSpeak, tokenInfo } from "./chain/solana.js";
+import { MIC_TYPES, MICS, QUALITIES, SPEAK, levelUpShout, levelUpSpeak, mintCost, repairCost, type StatKey } from "@syb/shared";
+import { allocate, buyFactoryMic, creditTalk, energyState, equip, levelUp, listMics, micBySerial, mintChild, repair, talkToday } from "./mics.js";
+import { micImage, micName } from "./chain/nft.js";
+import { startTalkBot } from "./talk/bot.js";
 
 const app = Fastify({ logger: { level: "info" } });
 await app.register(cors, { origin: true });
@@ -31,6 +35,7 @@ app.get("/health", async () => ({
   priceMode: env.priceMode,
   economy: economyEnabled(),
   chain: chainEnabled(),
+  mics: micsEnabled(),
 }));
 
 app.get("/instruments", async () => INSTRUMENTS);
@@ -211,14 +216,84 @@ app.post<{ Body: { wallet?: string; nonce?: string; signature?: string; nickname
 app.get("/me", async (req) => {
   const w = needWallet(req);
   const out = await me(w);
-  return { ...out, onchain: chainEnabled() ? Number(await onchainBalance(w)) / 10 ** TOKEN.decimals : null };
+  return {
+    ...out,
+    onchain: chainEnabled() ? Number(await onchainBalance(w)) / 10 ** TOKEN.decimals : null,
+    onchainSpeak: micsEnabled() ? Number(await onchainSpeak(w)) / 10 ** SPEAK.decimals : null,
+    energy: await energyState(w),
+    talkToday: await talkToday(w),
+  };
 });
 app.get("/me/history", async (req) => history(needWallet(req)));
-app.post<{ Body: { amount?: number } }>("/claims", async (req) => {
+app.post<{ Body: { amount?: number; currency?: string } }>("/claims", async (req) => {
   const w = needWallet(req);
   const amount = req.body?.amount;
-  return claim(w, typeof amount === "number" && amount > 0 ? amount : undefined);
+  return claim(w, typeof amount === "number" && amount > 0 ? amount : undefined, req.body?.currency === "SPEAK" ? "SPEAK" : "SHOUT");
 });
+
+// ---------- talk-to-earn: mic NFTs ----------
+const needMics = (req: Parameters<typeof walletOf>[0]) => {
+  const w = needWallet(req);
+  if (!micsEnabled()) throw new EconomyError("Mikrofonlar yapılandırılmamış (SPEAK_MINT, MIC_COLLECTION)", 503);
+  return w;
+};
+app.get("/mics/rules", async () => ({
+  enabled: micsEnabled() && economyEnabled(),
+  rules: MICS,
+  types: MIC_TYPES,
+  qualities: QUALITIES,
+  costs: {
+    levelUp: Array.from({ length: MICS.maxLevel }, (_, l) => ({ level: l, speak: levelUpSpeak(l), shout: levelUpShout(l) })),
+    mint: Array.from({ length: MICS.maxMintCount }, (_, i) => mintCost(i, i)),
+  },
+}));
+app.get("/me/mics", async (req) => listMics(needMics(req)));
+app.post<{ Body: { signature?: string; name?: string } }>("/mics/buy", async (req) => {
+  const w = needMics(req);
+  return buyFactoryMic(w, clean(req.body?.name, 24) || "Anonim", req.body?.signature ? String(req.body.signature) : undefined);
+});
+app.post<{ Params: { asset: string } }>("/mics/:asset/equip", async (req) => equip(needMics(req), req.params.asset));
+app.post<{ Params: { asset: string } }>("/mics/:asset/levelup", async (req) => levelUp(needMics(req), req.params.asset));
+app.post<{ Params: { asset: string }; Body: Partial<Record<StatKey, number>> }>("/mics/:asset/points", async (req) => allocate(needMics(req), req.params.asset, req.body ?? {}));
+app.post<{ Params: { asset: string } }>("/mics/:asset/repair", async (req) => repair(needMics(req), req.params.asset));
+app.get<{ Querystring: { level?: string; quality?: string; durability?: string } }>("/mics/repair-cost", async (req) => {
+  const lvl = Number(req.query.level ?? 0);
+  const quality = (req.query.quality ?? "common") as keyof typeof QUALITIES;
+  return { speak: repairCost(100 - Number(req.query.durability ?? 100), lvl, QUALITIES[quality] ? quality : "common") };
+});
+app.post<{ Body: { a?: string; b?: string } }>("/mics/mint", async (req) => mintChild(needMics(req), String(req.body?.a), String(req.body?.b)));
+
+// NFT metadata (Metaplex JSON standard) — URIs of minted mics point here, so stats stay live.
+app.get<{ Params: { serial: string } }>("/nft/mic/:serial.json", async (req, reply) => {
+  const m = await micBySerial(Number(req.params.serial));
+  if (!m) return reply.code(404).send({ error: "not found" });
+  const image = micImage(m.type, m.quality);
+  return {
+    name: micName(m.serial, m.type),
+    symbol: "SYBMIC",
+    description: `${QUALITIES[m.quality].label} ${MIC_TYPES[m.type].label} mikrofon. ShoutYourBet odalarında konuşarak $SPEAK kazandırır.`,
+    image,
+    external_url: env.publicWebUrl,
+    attributes: [
+      { trait_type: "Tip", value: MIC_TYPES[m.type].label },
+      { trait_type: "Kalite", value: QUALITIES[m.quality].label },
+      { trait_type: "Seviye", value: m.level, display_type: "number" },
+      { trait_type: "Verim", value: m.efficiency, display_type: "number" },
+      { trait_type: "Şans", value: m.luck, display_type: "number" },
+      { trait_type: "Dayanıklılık", value: m.resilience, display_type: "number" },
+      { trait_type: "Karizma", value: m.charisma, display_type: "number" },
+      { trait_type: "Basım", value: m.mintCount, display_type: "number" },
+    ],
+    properties: { files: [{ uri: image, type: "image/png" }], category: "image" },
+  };
+});
+app.get("/nft/collection.json", async () => ({
+  name: "ShoutYourBet Mics",
+  symbol: "SYBMIC",
+  description: "ShoutYourBet sesli trade odalarında konuşarak $SPEAK kazandıran mikrofonlar.",
+  image: `${env.publicWebUrl}/mics/collection.png`,
+  external_url: env.publicWebUrl,
+}));
 app.post<{ Body: { itemId?: string; signature?: string } }>("/purchases", async (req) => {
   const w = needWallet(req);
   const itemId = String(req.body?.itemId ?? "");
@@ -246,13 +321,22 @@ if (env.devTools) {
     return fireAlarm(id, pct, price);
   });
   /** dev: credit off-chain $SHOUT to a wallet (testing) */
-  app.post<{ Body: { wallet?: string; amount?: number } }>("/debug/credit", async (req) => {
+  app.post<{ Body: { wallet?: string; amount?: number; currency?: string } }>("/debug/credit", async (req) => {
     needEconomy();
     const { wallet, amount } = req.body ?? {};
+    const cur = req.body?.currency === "SPEAK" ? "SPEAK" : "SHOUT";
     if (!isWallet(wallet) || !amount) throw new EconomyError("wallet & amount");
     await ensureUser(wallet, "test");
-    await q("insert into ledger (wallet, amount, reason, ref) values ($1,$2,'admin',$3)", [wallet, toBase(amount).toString(), `debug:${randomUUID()}`]);
+    const units = cur === "SHOUT" ? toBase(amount) : BigInt(Math.round(amount * 10 ** SPEAK.decimals));
+    await q("insert into ledger (wallet, currency, amount, reason, ref) values ($1,$2,$3,'admin',$4)", [wallet, cur, units.toString(), `debug:${randomUUID()}`]);
     return me(wallet);
+  });
+  /** dev: credit verified talk without LiveKit (tests the reward math end-to-end) */
+  app.post<{ Body: { wallet?: string; seconds?: number; listeners?: number } }>("/debug/talk", async (req) => {
+    needEconomy();
+    const { wallet, seconds, listeners } = req.body ?? {};
+    if (!isWallet(wallet)) throw new EconomyError("wallet");
+    return creditTalk(wallet, "debug", Number(seconds ?? 60), Number(listeners ?? 2));
   });
   /** dev: pay a season bonus for the current week right now */
   app.post("/debug/season", async () => paySeason(isoWeek().start));
@@ -263,6 +347,7 @@ startPrices();
 startAlarms();
 startScoring();
 if (economyEnabled()) startSeasonScheduler();
+if (economyEnabled() && micsEnabled() && livekitConfigured()) startTalkBot();
 
 await app.listen({ port: env.port, host: "0.0.0.0" });
-console.log(`[api] listening on :${env.port} (livekit=${livekitConfigured()}, prices=${env.priceMode}, economy=${economyEnabled()}, chain=${chainEnabled()})`);
+console.log(`[api] listening on :${env.port} (livekit=${livekitConfigured()}, prices=${env.priceMode}, economy=${economyEnabled()}, chain=${chainEnabled()}, mics=${micsEnabled()})`);
