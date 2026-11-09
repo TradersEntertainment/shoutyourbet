@@ -154,8 +154,19 @@ async function main() {
     await lp.waitForSelector(".stage");
     listeners.push(lc);
   }
+  // Sıradan mic + SOL room (no mission ever runs there) → told to wait for mission hours
   await page.goto(SITE + "/room/inst-SOL");
+  await page.waitForSelector(".talk-hud:has-text('Görev saati dışında')", { timeout: 20000 });
+  const hudText = (await page.locator(".talk-hud").textContent()).replace(/\s+/g, " ");
+  ok(/Sıradaki görev: \d\d:\d\d/.test(hudText), "Sıradan mic: HUD says outside mission hours + next mission", hudText.slice(0, 120));
+  await page.screenshot({ path: `${OUT}/mics-4a-outside-mission.png` });
+  // make the equipped mic Destansı (earns any time) and come back
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("syb.session")).token);
+  const meNow = await (await fetch(API + "/me", { headers: { authorization: `Bearer ${token}` } })).json();
+  await post("/debug/mic-quality", { asset: meNow.equipped.asset, quality: "epic" });
+  await page.reload();
   await page.waitForSelector(".mic-btn:not([disabled])", { timeout: 20000 });
+  await page.waitForFunction(() => !document.querySelector(".talk-hud")?.textContent?.includes("Görev saati dışında"), null, { timeout: 20000 });
   await page.click(".mic-btn");
   await page.waitForSelector(".mic-btn.on", { timeout: 10000 });
   ok(true, "speaker turned the mic on (fake mic plays recorded speech)");

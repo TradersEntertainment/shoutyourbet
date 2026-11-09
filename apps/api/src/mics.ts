@@ -15,6 +15,15 @@ import {
   rollStats,
   speakPerMinute,
   wearPerMinute,
+  activeMissionForRoom,
+  canTalkAnytime,
+  dailyTalkCap,
+  dayKey,
+  missionsForDay,
+  nextMission,
+  type MissionInstance,
+  type TalkMission,
+  type TalkNext,
   type EnergyState,
   type Mic,
   type MicType,
@@ -287,16 +296,45 @@ export interface TalkResult {
   energy: number;
   maxEnergy: number;
   durability: number | null;
+  dailyUsed: number;
+  dailyCap: number;
+  mission?: TalkMission;
+  next?: TalkNext;
+}
+
+const nextInfo = (now: number): TalkNext | undefined => {
+  const n = nextMission(now);
+  return n ? { title: n.title, startAt: n.startAt, room: n.room } : undefined;
+};
+
+/** Verified talk seconds counted for a wallet on a Türkiye day. */
+async function dailyUsed(c: pg.PoolClient | null, wallet: string, day: string) {
+  const sql = "select coalesce(sum(seconds),0)::int s from talk_chunks where wallet = $1 and day = $2";
+  const rows = c ? (await c.query(sql, [wallet, day])).rows : await q(sql, [wallet, day]);
+  return Number(rows[0].s);
 }
 
 /**
  * Credit `seconds` of verified talk. Called by the talk bot every flush.
  * Listeners are other people in the room (bot excluded).
+ *
+ * Rules, in order: wallet → equipped mic owned on-chain → listeners → durability → energy →
+ * mission window (Sıradan/Nadir/Ender only earn in an active mission in its room) →
+ * daily cap by best owned mic. Earned talk inside an active mission also advances it.
  */
-export async function creditTalk(wallet: string, room: string, seconds: number, listeners: number, rnd: () => number = Math.random): Promise<TalkResult> {
+export async function creditTalk(
+  wallet: string,
+  room: string,
+  seconds: number,
+  listeners: number,
+  now: number = Date.now(),
+  rnd: () => number = Math.random,
+): Promise<TalkResult> {
+  const day = dayKey(now);
   const [u] = await q("select equipped_mic from users where wallet = $1", [wallet]);
-  const none = (status: TalkStatus, e?: EnergyState, durability: number | null = null): TalkResult => ({
-    status, seconds: 0, speak: 0, box: 0, energy: e?.energy ?? 0, maxEnergy: e?.max ?? 0, durability,
+  const base = { seconds: 0, speak: 0, box: 0, dailyUsed: 0, dailyCap: 0 };
+  const none = (status: TalkStatus, e?: EnergyState, durability: number | null = null, extra: Partial<TalkResult> = {}): TalkResult => ({
+    ...base, status, energy: e?.energy ?? 0, maxEnergy: e?.max ?? 0, durability, ...extra,
   });
   if (!u) return none("no-wallet");
   if (!u.equipped_mic || !(await ownsOnChain(wallet, u.equipped_mic))) return none("no-mic", await energyState(wallet));
@@ -307,10 +345,17 @@ export async function creditTalk(wallet: string, room: string, seconds: number, 
     const e = await energyState(wallet, c);
     const [m] = (await c.query("select * from mics where asset = $1 for update", [u.equipped_mic])).rows;
     if (!m || m.owner !== wallet) return none("no-mic", e);
-    if (m.durability <= 0) return none("broken", e, 0);
-    if (e.energy <= 0) return none("no-energy", e, round2(m.durability));
+    const cap = dailyTalkCap((await ownedQualities(c, wallet)).map((r) => r.quality));
+    const used = await dailyUsed(c, wallet, day);
+    const ctx = { dailyUsed: used, dailyCap: cap };
+    if (m.durability <= 0) return none("broken", e, 0, ctx);
+    if (e.energy <= 0) return none("no-energy", e, round2(m.durability), ctx);
 
-    const usable = Math.min(seconds, Math.floor(e.energy * MICS.minutesPerEnergy * 60));
+    const mission: MissionInstance | null = activeMissionForRoom(room, now);
+    if (!mission && !canTalkAnytime(m.quality)) return none("outside-mission", e, round2(m.durability), { ...ctx, next: nextInfo(now) });
+    if (used >= cap) return none("daily-limit", e, round2(m.durability), { ...ctx, next: nextInfo(now) });
+
+    const usable = Math.min(seconds, Math.floor(e.energy * MICS.minutesPerEnergy * 60), cap - used);
     const minutes = usable / 60;
     const speak = round2(speakPerMinute(m, listeners) * minutes);
     const wear = Math.min(m.durability, wearPerMinute(m.resilience) * minutes);
@@ -319,13 +364,39 @@ export async function creditTalk(wallet: string, room: string, seconds: number, 
     const id = randomUUID();
 
     await c.query(
-      "insert into talk_chunks (id, wallet, mic, room, seconds, listeners, speak, energy_used, wear) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-      [id, wallet, m.asset, room, usable, listeners, toUnits(speak, "SPEAK").toString(), energyUsed, wear],
+      "insert into talk_chunks (id, wallet, mic, room, seconds, listeners, speak, energy_used, wear, day, mission_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+      [id, wallet, m.asset, room, usable, listeners, toUnits(speak, "SPEAK").toString(), energyUsed, wear, day, mission?.id ?? null],
     );
     if (speak > 0) await post(c, wallet, "SPEAK", toUnits(speak, "SPEAK"), "talk", id);
     if (box > 0) await post(c, wallet, "SPEAK", toUnits(box, "SPEAK"), "box", id);
     await c.query("update mics set durability = greatest(0, durability - $2) where asset = $1", [m.asset, wear]);
     await c.query("update users set energy = greatest(0, energy - $2) where wallet = $1", [wallet, energyUsed]);
+
+    let missionOut: TalkMission | undefined;
+    if (mission) {
+      const [pr] = (
+        await c.query(
+          `insert into mission_progress (wallet, mission_id, day, seconds) values ($1,$2,$3,$4)
+           on conflict (wallet, mission_id, day) do update set seconds = mission_progress.seconds + excluded.seconds
+           returning seconds, completed_at`,
+          [wallet, mission.id, day, usable],
+        )
+      ).rows;
+      let bonus: number | undefined;
+      if (!pr.completed_at && pr.seconds >= mission.targetSec) {
+        await c.query("update mission_progress set completed_at = now() where wallet = $1 and mission_id = $2 and day = $3", [wallet, mission.id, day]);
+        await post(c, wallet, "SPEAK", toUnits(mission.bonus, "SPEAK"), "mission", `${mission.id}:${day}:${wallet}`);
+        bonus = mission.bonus;
+      }
+      missionOut = {
+        id: mission.id,
+        title: mission.title,
+        progress: Math.min(pr.seconds, mission.targetSec),
+        target: mission.targetSec,
+        completed: Boolean(pr.completed_at) || bonus != null,
+        bonus,
+      };
+    }
     return {
       status: "earning" as TalkStatus,
       seconds: usable,
@@ -334,14 +405,42 @@ export async function creditTalk(wallet: string, room: string, seconds: number, 
       energy: round2(Math.max(0, e.energy - energyUsed)),
       maxEnergy: e.max,
       durability: round2(Math.max(0, m.durability - wear)),
+      dailyUsed: used + usable,
+      dailyCap: cap,
+      mission: missionOut,
     };
   });
 }
 
-export async function talkToday(wallet: string) {
-  const [r] = await q(
-    "select coalesce(sum(seconds),0)::int seconds, coalesce(sum(speak),0) speak from talk_chunks where wallet = $1 and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'",
-    [wallet],
-  );
-  return { seconds: r.seconds, speak: fromUnits(r.speak, "SPEAK") };
+export async function talkToday(wallet: string, now: number = Date.now()) {
+  const day = dayKey(now);
+  const [r] = await q("select coalesce(sum(seconds),0)::int seconds, coalesce(sum(speak),0) speak from talk_chunks where wallet = $1 and day = $2", [wallet, day]);
+  const cap = dailyTalkCap((await ownedQualities(null, wallet)).map((x) => x.quality));
+  return { seconds: r.seconds, speak: fromUnits(r.speak, "SPEAK"), cap };
+}
+
+/** Today's missions, with this wallet's progress when given. */
+export async function missionsToday(wallet: string | null, now: number = Date.now()) {
+  const list = missionsForDay(now);
+  const progress = wallet
+    ? await q<{ mission_id: string; seconds: number; completed_at: string | null }>(
+        "select mission_id, seconds, completed_at from mission_progress where wallet = $1 and day = $2",
+        [wallet, dayKey(now)],
+      )
+    : [];
+  const next = nextMission(now);
+  return {
+    now,
+    day: dayKey(now),
+    next: next ? { id: next.id, day: next.day, startAt: next.startAt, title: next.title, room: next.room } : null,
+    missions: list.map((m) => {
+      const p = progress.find((x) => x.mission_id === m.id);
+      return { ...m, progress: Math.min(p?.seconds ?? 0, m.targetSec), completed: Boolean(p?.completed_at) };
+    }),
+  };
+}
+
+/** Dev/test helper: change a mic's quality. */
+export async function setMicQuality(asset: string, quality: Quality) {
+  await q("update mics set quality = $2 where asset = $1", [asset, quality]);
 }

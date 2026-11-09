@@ -14,6 +14,8 @@ import bs58 from "bs58";
 import { MICS, levelUpShout, levelUpSpeak, signInMessage, toBase } from "@syb/shared";
 
 const API = process.env.API_URL ?? "http://localhost:4000";
+/** Inside the daily "BTC akşam kaosu" mission (21:00–22:00 Türkiye time, BTC room). */
+const MISSION = { room: "inst-BTC", at: "2026-11-09T21:10:00+03:00" };
 const RPC = process.env.SOLANA_RPC_URL ?? "http://127.0.0.1:8899";
 const conn = new Connection(RPC, "confirmed");
 let failures = 0;
@@ -54,7 +56,7 @@ async function main() {
   const umi = umiFor(user);
 
   // --- without a mic nothing is earned
-  const t0 = await call("/debug/talk", { wallet, seconds: 60, listeners: 3 });
+  const t0 = await call("/debug/talk", { wallet, seconds: 60, ...MISSION, listeners: 3 });
   ok(t0.json.status === "no-mic" && t0.json.speak === 0, "no mic → no earnings", t0.json.status);
 
   // --- buy with off-chain $SHOUT
@@ -87,17 +89,17 @@ async function main() {
 
   // --- talk rules
   await call(`/mics/${b1.json.asset}/equip`, {}, s);
-  const few = await call("/debug/talk", { wallet, seconds: 60, listeners: 1 });
+  const few = await call("/debug/talk", { wallet, seconds: 60, ...MISSION, listeners: 1 });
   ok(few.json.status === "few-listeners" && few.json.speak === 0, "1 listener → not counted", few.json.status);
-  const t1 = await call("/debug/talk", { wallet, seconds: 120, listeners: 2 });
+  const t1 = await call("/debug/talk", { wallet, seconds: 120, ...MISSION, listeners: 2 });
   ok(t1.json.status === "earning" && t1.json.speak > 0, "2 minutes with 2 listeners → earns $SPEAK", `+${t1.json.speak} SPEAK, energy ${t1.json.energy}, durability ${t1.json.durability}`);
   ok(Math.abs(t1.json.energy - (2 - 120 / 300)) < 0.01, "energy spent: 1 energy = 5 minutes");
   ok(t1.json.durability < 100, "mic wears while talking");
-  const crowd = await call("/debug/talk", { wallet, seconds: 120, listeners: 12 });
+  const crowd = await call("/debug/talk", { wallet, seconds: 120, ...MISSION, listeners: 12 });
   ok(crowd.json.speak > t1.json.speak, "busier room pays more (crowd + charisma bonus)", `${crowd.json.speak} vs ${t1.json.speak}`);
-  const long = await call("/debug/talk", { wallet, seconds: 3600, listeners: 2 });
+  const long = await call("/debug/talk", { wallet, seconds: 3600, ...MISSION, listeners: 2 });
   ok(long.json.seconds < 3600 && long.json.energy === 0, "talk capped by remaining energy", `${long.json.seconds}s counted`);
-  const out = await call("/debug/talk", { wallet, seconds: 60, listeners: 3 });
+  const out = await call("/debug/talk", { wallet, seconds: 60, ...MISSION, listeners: 3 });
   ok(out.json.status === "no-energy" && out.json.speak === 0, "no energy → no earnings", out.json.status);
 
   // --- level, points, repair
@@ -147,6 +149,48 @@ async function main() {
   ok(eq.status === 404, "seller can no longer use a transferred mic", `status ${eq.status}`);
   const buyerMics = (await call("/me/mics", undefined, s2)).json;
   ok(buyerMics.some((m: any) => m.asset === child.json.asset && m.mintCount === 0), "buyer sees the mic with its stats", `#${child.json.serial}`);
+
+
+  // --- missions & daily limit (fresh player, Sıradan mic)
+  {
+  const p2 = Keypair.generate();
+  const w2 = p2.publicKey.toBase58();
+  const s2b = await login(p2, "GörevKemal");
+  await call("/debug/credit", { wallet: w2, amount: 1000 });
+  const m2 = (await call("/mics/buy", { name: "GörevKemal" }, s2b)).json;
+  await call(`/mics/${m2.asset}/equip`, {}, s2b);
+  await call("/debug/energy", { wallet: w2, energy: 10 });
+  const talk = (room: string, at: string, seconds: number) => call("/debug/talk", { wallet: w2, seconds, listeners: 3, room, at }).then((r) => r.json);
+
+  const off = await talk("inst-BTC", "2026-11-10T12:00:00+03:00", 120);
+  ok(off.status === "outside-mission" && off.speak === 0, "Sıradan mic outside mission hours earns nothing", `next: ${off.next?.title}`);
+  ok(off.next?.room === "inst-NDX", "…and is told the next mission (ABD açılışı, NDX)", off.next?.title);
+  const wrong = await talk("inst-ETH", "2026-11-10T21:10:00+03:00", 120);
+  ok(wrong.status === "outside-mission", "mission hours but wrong room → nothing", wrong.status);
+  const t1 = await talk("inst-BTC", "2026-11-10T21:10:00+03:00", 200);
+  ok(t1.status === "earning" && t1.mission?.progress === 200 && !t1.mission.completed, "in the mission room → earns + mission progress", `${t1.mission?.progress}/${t1.mission?.target}`);
+  const t2 = await talk("inst-BTC", "2026-11-10T21:20:00+03:00", 200);
+  ok(t2.mission?.completed && t2.mission.bonus === 15, "mission completed → +15 $SPEAK bonus", JSON.stringify(t2.mission));
+  const a3 = await talk("inst-BTC", "2026-11-10T21:30:00+03:00", 200);
+  ok(a3.mission?.completed && !a3.mission.bonus, "bonus is paid only once");
+  ok(a3.dailyUsed === 600 && a3.dailyCap === 900, "daily usage tracked against the Sıradan cap (15 min)", `${a3.dailyUsed}/${a3.dailyCap}s`);
+  const a4 = await talk("inst-BTC", "2026-11-10T21:40:00+03:00", 600);
+  ok(a4.seconds === 300 && a4.dailyUsed === 900, "talk is cut at the daily cap", `${a4.seconds}s counted`);
+  const a5 = await talk("inst-BTC", "2026-11-10T21:50:00+03:00", 60);
+  ok(a5.status === "daily-limit" && a5.speak === 0, "daily limit reached → nothing", a5.status);
+  const nextDay = await talk("inst-BTC", "2026-11-11T21:05:00+03:00", 60);
+  ok(nextDay.status === "earning" && nextDay.dailyUsed === 60, "limit resets on the next Türkiye day", `${nextDay.dailyUsed}s`);
+  const hist2 = (await call("/me/history", undefined, s2b)).json;
+  const missionRows = hist2.ledger.filter((r: any) => r.reason === "mission");
+  ok(missionRows.length === 1, "exactly one mission bonus in the ledger", JSON.stringify(missionRows.map((r: any) => [r.ref, r.amount])));
+
+  await call("/debug/mic-quality", { asset: m2.asset, quality: "epic" });
+  const anytime = await talk("inst-SOL", "2026-11-12T12:00:00+03:00", 120);
+  ok(anytime.status === "earning" && !anytime.mission, "Destansı mic earns anytime, in any room", `+${anytime.speak} SPEAK`);
+  ok(anytime.dailyCap === 3600, "Destansı daily cap is 60 min", `${anytime.dailyCap}s`);
+  const missions = (await call("/missions", undefined, s2b)).json;
+  ok(Array.isArray(missions.missions) && missions.missions.length >= 2, "GET /missions lists today's missions", missions.missions.map((m: any) => `${m.start} ${m.title}`).join(", "));
+  }
 
   console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
   process.exit(failures ? 1 : 0);

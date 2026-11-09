@@ -96,7 +96,12 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
   const onMsg = useCallback(
     (m: DataMsg) => {
       if (m.t === "TALK") {
-        setTalk((t) => ({ last: m, total: t.total + m.speak + (m.box ?? 0), at: Date.now() }));
+        setTalk((t) => ({ last: m, total: t.total + m.speak + (m.box ?? 0) + (m.mission?.bonus ?? 0), at: Date.now() }));
+        if (m.mission?.bonus) {
+          playSfx("applause");
+          setNotice(`🎯 Görev tamamlandı: ${m.mission.title} · +${m.mission.bonus} $SPEAK`);
+          setTimeout(() => setNotice(null), 5000);
+        }
         if (m.box) {
           playSfx("cash");
           setNotice(`📦 Sürpriz kutu! +${m.box} $SPEAK`);
@@ -302,7 +307,7 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
 
         <aside className="room-side">
           <section className="panel ticket o-ticket">
-            {conn && <TalkHud talk={talk} />}
+            {conn && <TalkHud talk={talk} room={room.name} />}
             {conn && <MicButton />}
             {conn && room.mode === "stage" && !conn.host && (
               <button

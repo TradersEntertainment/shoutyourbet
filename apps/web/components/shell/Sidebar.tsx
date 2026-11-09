@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Headphones, Plus, Mic2, Radio, LayoutGrid, Wallet, ShoppingBag, Mic } from "lucide-react";
-import { INSTRUMENTS, instrumentById, officialRoomName } from "@syb/shared";
+import { INSTRUMENTS, activeMissionForRoom, instrumentById, officialRoomName } from "@syb/shared";
 import { fmtPrice } from "@/lib/api";
 import { useMarket } from "./market";
 import { InstrumentBadge } from "../InstrumentBadge";
@@ -37,7 +37,10 @@ export function Sidebar({ onCreate, onNavigate }: { onCreate: () => void; onNavi
             <Link key={i.id} href={`/room/${name}`} onClick={onNavigate} className={`side-row ${path === `/room/${name}` ? "active" : ""}`}>
               <InstrumentBadge inst={i} size={26} />
               <span className="side-name">
-                <b>{i.id}</b>
+                <b>
+                  {i.id}
+                  {activeMissionForRoom(name) && <span className="mission-dot" title={`Görev aktif: ${activeMissionForRoom(name)!.title}`}>GÖREV</span>}
+                </b>
                 <small className="muted">{i.name}</small>
               </span>
               <span className="side-price">

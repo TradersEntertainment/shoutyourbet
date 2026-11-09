@@ -132,3 +132,18 @@ create table if not exists talk_chunks (
   created_at  timestamptz not null default now()
 );
 create index if not exists talk_wallet_idx on talk_chunks (wallet, created_at desc);
+
+-- Talk missions & daily caps (Türkiye day keys, e.g. 2026-11-09)
+alter table talk_chunks add column if not exists day text;
+alter table talk_chunks add column if not exists mission_id text;
+update talk_chunks set day = to_char(created_at at time zone 'Europe/Istanbul', 'YYYY-MM-DD') where day is null;
+create index if not exists talk_wallet_day_idx on talk_chunks (wallet, day);
+
+create table if not exists mission_progress (
+  wallet       text not null references users(wallet),
+  mission_id   text not null,
+  day          text not null,
+  seconds      integer not null default 0,
+  completed_at timestamptz,
+  primary key (wallet, mission_id, day)
+);

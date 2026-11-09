@@ -37,6 +37,19 @@ export const QUALITIES: Record<Quality, { label: string; color: string; base: [n
 };
 export const QUALITY_ORDER: Quality[] = ["common", "uncommon", "rare", "epic", "legendary"];
 
+/** Qualities that earn at any time; the rest only earn during missions (see missions.ts). */
+export const ANYTIME_QUALITIES: Quality[] = ["epic", "legendary"];
+export const canTalkAnytime = (q: Quality) => ANYTIME_QUALITIES.includes(q);
+
+/** Hard daily cap of verified talk, by the best mic you own (independent of energy). */
+export const DAILY_TALK_MINUTES: Record<Quality, number> = { common: 15, uncommon: 25, rare: 40, epic: 60, legendary: 90 };
+/** Daily cap in seconds for a set of owned mics (0 if none). */
+export function dailyTalkCap(qualities: Quality[]) {
+  if (!qualities.length) return 0;
+  const best = qualities.reduce((a, b) => (QUALITY_ORDER.indexOf(b) > QUALITY_ORDER.indexOf(a) ? b : a));
+  return DAILY_TALK_MINUTES[best] * 60;
+}
+
 export const MICS = {
   /** factory box: always a common mic of random type */
   factoryPriceShout: 1000,

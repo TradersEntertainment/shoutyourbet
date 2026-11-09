@@ -82,6 +82,21 @@ StepN'de yürüyerek kazanılıyordu; burada **konuşarak**. StepN ayakkabı sat
 | $SPEAK | Oyun içi token, **sınırsız arz**. Konuşunca zincir dışı bakiyeye yazılır; çekince zincirde basılır (mint yetkisi hazinede). |
 | Harcama | Seviye atlama ($SPEAK; 5, 10, 15… seviyelerde ayrıca $SHOUT), tamir ($SPEAK), iki mikrofondan yeni mikrofon basma ($SPEAK + $SHOUT, mikrofon başına 7 basım) |
 
+**Görev saatleri ve günlük limit**
+- **Sıradan, Nadir, Ender** mikrofonlar sadece **görev saatinde, görev odasında** kazanır. **Destansı ve Efsanevi** her zaman, her odada kazanır.
+- Görevler (Türkiye saati, her gün tekrar eder; tamamlayana bonus, oyuncu başına günde bir kez):
+
+| Saat | Görev | Oda | Hedef | Bonus |
+|---|---|---|---|---|
+| 10:00–11:00 (hafta içi) | BIST açılış seansı | BIST 100 | 5 dk | +10 $SPEAK |
+| 16:30–17:30 (hafta içi) | ABD açılışı | Nasdaq 100 | 5 dk | +10 $SPEAK |
+| 21:00–22:00 | BTC akşam kaosu | Bitcoin | 5 dk | +15 $SPEAK |
+| 23:00–23:45 | Gece kripto | Ethereum | 5 dk | +10 $SPEAK |
+
+- **Günlük konuşma limiti** (enerjiden bağımsız sert tavan, en iyi mikrofonuna göre): Sıradan 15, Nadir 25, Ender 40, Destansı 60, Efsanevi 90 dk. Türkiye saatiyle gece yarısı sıfırlanır.
+- Sıra: cüzdan → takılı mikrofon (zincirde sende mi) → dinleyici ≥ 2 → dayanıklılık → enerji → görev saati → günlük limit. Hangisi önce biterse kazanç orada durur; odadaki panel nedenini ve sıradaki görevi gösterir.
+- Görev programını değiştirmek: `packages/shared/src/missions.ts` (deploy gerekir).
+
 Bütün sayılar tek dosyada: `packages/shared/src/mics.ts`.
 
 **Konuşma nasıl sayılır (hile koruması)**
@@ -104,9 +119,9 @@ solana-test-validator --reset --url https://api.devnet.solana.com --clone-upgrad
 SOLANA_CLUSTER=localnet SOLANA_RPC_URL=http://127.0.0.1:8899 pnpm --filter @syb/api chain:setup
 # LiveKit: livekit-server --dev  (LIVEKIT_URL=ws://127.0.0.1:7880, LIVEKIT_API_KEY=devkey, LIVEKIT_API_SECRET=secret)
 # api: DATABASE_URL, SESSION_SECRET, DEV_TOOLS=1, TALK_FLUSH_SEC=10, SOLANA_*, SHOUT_MINT, SPEAK_MINT, MIC_COLLECTION, SOLANA_TREASURY_SECRET
-pnpm --filter @syb/api test                                    # konuşma dedektörü, gerçek ses dosyalarıyla (6 test)
+pnpm --filter @syb/api test                                    # konuşma dedektörü (gerçek ses) + görev saatleri/limit (11 test)
 pnpm --filter @syb/api exec tsx scripts/e2e-economy.ts        # $SHOUT ekonomisi (24 kontrol)
-pnpm --filter @syb/api exec tsx scripts/e2e-mics.ts           # mikrofon NFT, enerji, seviye, tamir, basım, $SPEAK çekme (31 kontrol)
+pnpm --filter @syb/api exec tsx scripts/e2e-mics.ts           # mikrofon NFT, enerji, seviye, tamir, basım, $SPEAK çekme, görevler, günlük limit (45 kontrol)
 pnpm --filter @syb/api exec tsx scripts/e2e-talk.ts           # gerçek LiveKit sesi: konuşma kazanır, gürültü ve tek dinleyici kazanmaz
 node apps/web/e2e/wallet.e2e.cjs ./out                         # tarayıcı: cüzdan, çekim, mağaza, megafon
 node apps/web/e2e/mics.e2e.cjs ./out                           # tarayıcı: kutu aç, tak, seviye, puan, sahte mikrofonla odada konuş ve kazan

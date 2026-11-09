@@ -730,3 +730,34 @@ td .spark { margin-left: auto; }
   .mc-img { width: 84px; height: 84px; }
   .energy-pill .mono { display: none; }
 }
+
+
+/* ============================================================
+   Missions & daily limit
+   ============================================================ */
+.w-fit { width: fit-content; }
+.tag.live { color: #fff; background: var(--down); animation: blink 1.4s infinite; }
+.mission-dot {
+  display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; vertical-align: 1px;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.05em; color: #1a1400; background: var(--accent);
+}
+.mission-list { list-style: none; padding: 0; margin: 4px 0 8px; display: grid; gap: 8px; }
+.mission { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--r); border: 1px solid var(--line); background: var(--bg); }
+.mission.active { border-color: rgba(240, 185, 11, 0.55); background: linear-gradient(90deg, rgba(240, 185, 11, 0.08), transparent); }
+.mission.ended:not(.done) { opacity: 0.55; }
+.mission.done { border-color: rgba(14, 203, 129, 0.4); }
+.mi-top { display: flex; align-items: center; gap: 8px; }
+.mi-top .tag { margin-left: auto; }
+.mi-time { font-weight: 700; font-size: 12px; color: var(--text-2); }
+.mi-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.mi-title b { font-size: 13px; }
+.mi-title a:hover { color: var(--accent); }
+.mi-progress { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+.mi-progress .meter { margin: 0; height: 6px; }
+.mi-bonus { display: inline-flex; align-items: center; gap: 3px; color: #22d3ee; font-weight: 700; }
+.mission.done .mi-progress .meter span { background: var(--up); }
+.th-mission, .th-daily { grid-column: 1 / -1; display: grid; gap: 4px; padding-top: 8px; border-top: 1px dashed var(--line-2); }
+.th-daily { grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.th-mission .meter, .th-daily .meter { margin: 0; height: 6px; }
+.thm-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+.th-daily .meter span { background: linear-gradient(90deg, #22d3ee, var(--accent)); }

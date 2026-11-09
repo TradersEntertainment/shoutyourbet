@@ -2,7 +2,23 @@
 export const DATA_TOPIC = "syb";
 
 export type Side = "LONG" | "SHORT";
-export type TalkStatus = "earning" | "few-listeners" | "no-energy" | "no-mic" | "no-wallet" | "broken";
+export type TalkStatus = "earning" | "few-listeners" | "no-energy" | "no-mic" | "no-wallet" | "broken" | "outside-mission" | "daily-limit";
+
+/** Mission info attached to TALK updates. */
+export interface TalkMission {
+  id: string;
+  title: string;
+  progress: number;
+  target: number;
+  completed: boolean;
+  /** set on the update that completed it */
+  bonus?: number;
+}
+export interface TalkNext {
+  title: string;
+  startAt: number;
+  room: string;
+}
 
 export type DataMsg =
   // client -> room
@@ -15,7 +31,21 @@ export type DataMsg =
   | { t: "RESULT"; side: Side; pct: number; points: number; from: string; instrumentId: string; reward?: number }
   | { t: "MEGAPHONE"; from: string; text: string; until: number }
   /** server -> one speaker: talk-to-earn status, sent every flush */
-  | { t: "TALK"; status: TalkStatus; seconds: number; speak: number; energy: number; maxEnergy: number; durability: number | null; box?: number }
+  | {
+      t: "TALK";
+      status: TalkStatus;
+      seconds: number;
+      speak: number;
+      energy: number;
+      maxEnergy: number;
+      durability: number | null;
+      box?: number;
+      /** verified talk today / daily cap (seconds) */
+      dailyUsed?: number;
+      dailyCap?: number;
+      mission?: TalkMission;
+      next?: TalkNext;
+    }
   | { t: "ALARM"; instrumentId: string; dir: "up" | "down"; pct: number; price: number };
 
 const enc = new TextEncoder();

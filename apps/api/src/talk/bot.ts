@@ -87,7 +87,21 @@ export async function flush(name: string) {
     try {
       const r = await creditTalk(wallet, name, seconds, listeners);
       if (r.speak || r.box) log(`${name} ${p.name}: ${r.seconds}s → +${r.speak} SPEAK${r.box ? ` (+${r.box} box)` : ""} (${listeners} listeners)`);
-      await send(j, identity, { t: "TALK", status: r.status, seconds: r.seconds, speak: r.speak, energy: r.energy, maxEnergy: r.maxEnergy, durability: r.durability, box: r.box || undefined });
+      if (r.mission?.bonus) log(`${name} ${p.name}: mission "${r.mission.title}" completed → +${r.mission.bonus} SPEAK`);
+      await send(j, identity, {
+        t: "TALK",
+        status: r.status,
+        seconds: r.seconds,
+        speak: r.speak,
+        energy: r.energy,
+        maxEnergy: r.maxEnergy,
+        durability: r.durability,
+        box: r.box || undefined,
+        dailyUsed: r.dailyUsed,
+        dailyCap: r.dailyCap,
+        mission: r.mission,
+        next: r.next,
+      });
     } catch (e) {
       log("credit failed", wallet, String(e));
     }

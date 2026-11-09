@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { ConnectionProvider, WalletProvider, useWallet } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import bs58 from "bs58";
-import { signInMessage, type ECONOMY, type EnergyState, type MICS, type MIC_TYPES, type QUALITIES, type ShopItem, type TOKEN } from "@syb/shared";
+import { signInMessage, type ECONOMY, type EnergyState, type MICS, type MIC_TYPES, type MicType, type QUALITIES, type Quality, type ShopItem, type TOKEN } from "@syb/shared";
 import { getNick, req } from "./api";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
@@ -35,7 +35,9 @@ export interface Me {
   speak: number;
   onchainSpeak: number | null;
   energy: EnergyState;
-  talkToday: { seconds: number; speak: number };
+  /** verified talk today; cap = daily limit in seconds (by best owned mic) */
+  talkToday: { seconds: number; speak: number; cap: number };
+  equipped: { asset: string; serial: number; type: MicType; quality: Quality } | null;
   earnedToday: number;
   dailyEarnCap: number;
   inventory: Record<string, number>;

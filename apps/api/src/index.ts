@@ -14,7 +14,7 @@ import { isWallet, issueSession, newNonce, verifySignIn, walletOf } from "./auth
 import { EconomyError, buyOnChain, buyWithBalance, claim, consume, ensureUser, history, isoWeek, me, owns, paySeason, startSeasonScheduler } from "./economy.js";
 import { onchainBalance, onchainSpeak, tokenInfo } from "./chain/solana.js";
 import { MIC_TYPES, MICS, QUALITIES, SPEAK, levelUpShout, levelUpSpeak, mintCost, repairCost, type StatKey } from "@syb/shared";
-import { allocate, buyFactoryMic, creditTalk, energyState, equip, levelUp, listMics, micBySerial, mintChild, repair, talkToday } from "./mics.js";
+import { allocate, buyFactoryMic, creditTalk, energyState, equip, levelUp, listMics, micBySerial, mintChild, missionsToday, repair, setMicQuality, talkToday } from "./mics.js";
 import { micImage, micName } from "./chain/nft.js";
 import { startTalkBot } from "./talk/bot.js";
 
@@ -222,6 +222,13 @@ app.get("/me", async (req) => {
     onchainSpeak: micsEnabled() ? Number(await onchainSpeak(w)) / 10 ** SPEAK.decimals : null,
     energy: await energyState(w),
     talkToday: await talkToday(w),
+    equipped:
+      (
+        await q(
+          "select m.asset, m.serial, m.type, m.quality from users u join mics m on m.asset = u.equipped_mic and m.owner = u.wallet where u.wallet = $1",
+          [w],
+        )
+      )[0] ?? null,
   };
 });
 app.get("/me/history", async (req) => history(needWallet(req)));
@@ -248,6 +255,8 @@ app.get("/mics/rules", async () => ({
   },
 }));
 app.get("/me/mics", async (req) => listMics(needMics(req)));
+/** Today's talk missions (Türkiye time), with your progress when signed in. */
+app.get("/missions", async (req) => missionsToday(economyEnabled() ? walletOf(req) : null));
 app.post<{ Body: { signature?: string; name?: string } }>("/mics/buy", async (req) => {
   const w = needMics(req);
   return buyFactoryMic(w, clean(req.body?.name, 24) || "Anonim", req.body?.signature ? String(req.body.signature) : undefined);
@@ -332,11 +341,29 @@ if (env.devTools) {
     return me(wallet);
   });
   /** dev: credit verified talk without LiveKit (tests the reward math end-to-end) */
-  app.post<{ Body: { wallet?: string; seconds?: number; listeners?: number } }>("/debug/talk", async (req) => {
+  app.post<{ Body: { wallet?: string; seconds?: number; listeners?: number; room?: string; at?: string } }>("/debug/talk", async (req) => {
     needEconomy();
-    const { wallet, seconds, listeners } = req.body ?? {};
+    const { wallet, seconds, listeners, room, at } = req.body ?? {};
     if (!isWallet(wallet)) throw new EconomyError("wallet");
-    return creditTalk(wallet, "debug", Number(seconds ?? 60), Number(listeners ?? 2));
+    const now = at ? Date.parse(at) : Date.now();
+    if (!Number.isFinite(now)) throw new EconomyError("at: ISO date");
+    return creditTalk(wallet, room ?? "debug", Number(seconds ?? 60), Number(listeners ?? 2), now);
+  });
+  /** dev: set a wallet's current energy */
+  app.post<{ Body: { wallet?: string; energy?: number } }>("/debug/energy", async (req) => {
+    await q("update users set energy = $2, energy_at = now() where wallet = $1", [String(req.body?.wallet), Number(req.body?.energy ?? 0)]);
+    return { ok: true };
+  });
+  /** dev: set a mic's quality (tests anytime vs mission-only mics) */
+  app.post<{ Body: { asset?: string; quality?: string } }>("/debug/mic-quality", async (req) => {
+    const quality = String(req.body?.quality);
+    if (!(quality in QUALITIES)) throw new EconomyError("quality");
+    await setMicQuality(String(req.body?.asset), quality as keyof typeof QUALITIES);
+    return { ok: true };
+  });
+  app.get<{ Querystring: { wallet?: string; at?: string } }>("/debug/talk-today", async (req) => {
+    const w = String(req.query.wallet);
+    return talkToday(w, req.query.at ? Date.parse(req.query.at) : Date.now());
   });
   /** dev: pay a season bonus for the current week right now */
   app.post("/debug/season", async () => paySeason(isoWeek().start));

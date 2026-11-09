@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { Zap, Wrench, ArrowUpCircle, Plus, Minus, Check, Loader2, Sparkles, Mic, Users, Clock, Package, Coins, Wallet, Info } from "lucide-react";
+import { Zap, Wrench, ArrowUpCircle, Plus, Minus, Check, Loader2, Sparkles, Mic, Users, Clock, Package, Coins, Wallet, Info, CalendarClock, Target, Hourglass } from "lucide-react";
 import {
   MICS,
   QUALITIES,
@@ -14,6 +14,11 @@ import {
   mintCost,
   repairCost,
   speakPerMinute,
+  canTalkAnytime,
+  DAILY_TALK_MINUTES,
+  instrumentById,
+  trTime,
+  type MissionInstance,
   type Mic as MicT,
   type StatKey,
 } from "@syb/shared";
@@ -68,6 +73,15 @@ function MicCard({ mic, busy, onAction }: { mic: MicT; busy: string | null; onAc
           <div className="small">
             <b style={{ color: q.color }}>{q.label}</b> <span className="muted">· {MIC_TYPES[mic.type].label}</span>
           </div>
+          {canTalkAnytime(mic.quality) ? (
+            <span className="tag ok w-fit">
+              <Clock size={11} /> Her zaman kazanır
+            </span>
+          ) : (
+            <span className="tag w-fit" title="Bu kalite sadece görev saatlerinde, görev odasında kazanır">
+              <CalendarClock size={11} /> Görev saatlerinde
+            </span>
+          )}
           <div className="mc-level">
             <span className="mono">Lv {mic.level}</span>
             <span className="muted small">Basım {mic.mintCount}/{MICS.maxMintCount}</span>
@@ -147,6 +161,75 @@ function MicCard({ mic, busy, onAction }: { mic: MicT; busy: string | null; onAc
         </button>
       </div>
     </article>
+  );
+}
+
+type MissionView = MissionInstance & { progress: number; completed: boolean };
+
+function MissionsPanel({ signedIn }: { signedIn: boolean }) {
+  const [data, setData] = useState<{ missions: MissionView[]; next: { title: string; startAt: number; room: string; day: string } | null } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => req<typeof data>("/missions").then((d) => alive && setData(d)).catch(() => {});
+    load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [signedIn]);
+  const list = data?.missions ?? [];
+  return (
+    <section className="panel missions">
+      <h3 className="ph">
+        <CalendarClock size={15} /> Bugünkü görevler
+      </h3>
+      <p className="muted small">Sıradan, Nadir ve Ender mikrofonlar sadece görev saatinde, görev odasında kazanır. Tamamlayana bonus.</p>
+      {list.length === 0 && <p className="empty">Bugün görev yok.</p>}
+      <ul className="mission-list">
+        {list.map((m) => {
+          const inst = instrumentById(m.instrumentId);
+          return (
+            <li key={m.id} className={`mission ${m.status} ${m.completed ? "done" : ""}`}>
+              <div className="mi-top">
+                <span className="mono mi-time">
+                  {m.start}–{m.end}
+                </span>
+                {m.status === "active" && <span className="tag live">Şu an aktif</span>}
+                {m.status === "ended" && !m.completed && <span className="tag">Bitti</span>}
+                {m.completed && (
+                  <span className="tag ok">
+                    <Check size={11} /> Tamamlandı
+                  </span>
+                )}
+              </div>
+              <div className="mi-title">
+                <b>{m.title}</b>
+                <Link href={`/room/${m.room}`} className="muted small">
+                  {inst?.name ?? m.instrumentId} odası →
+                </Link>
+              </div>
+              <div className="mi-progress">
+                <span className="meter wide">
+                  <span style={{ width: `${(m.progress / m.targetSec) * 100}%` }} />
+                </span>
+                <span className="muted small mono">
+                  {Math.floor(m.progress / 60)}/{Math.floor(m.targetSec / 60)} dk
+                </span>
+                <span className="mi-bonus small">
+                  <Target size={12} /> +{m.bonus}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {data?.next && data.next.day !== list[0]?.day && (
+        <p className="muted small">
+          Sıradaki: yarın {trTime(data.next.startAt)} · {data.next.title}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -262,7 +345,13 @@ export default function MicsPage() {
             <span className="kpi-v mono">
               <SpeakCoin size={20} /> {fmtToken(s.me?.speak)}
             </span>
-            <span className="kpi-l">bugün +{fmtToken(s.me?.talkToday?.speak)} · {Math.round((s.me?.talkToday?.seconds ?? 0) / 60)} dk konuşma</span>
+            <span className="kpi-l">bugün +{fmtToken(s.me?.talkToday?.speak)} kazanıldı</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-v mono">
+              <Hourglass size={18} className="muted" /> {Math.floor((s.me?.talkToday?.seconds ?? 0) / 60)}/{Math.floor((s.me?.talkToday?.cap ?? 0) / 60)}
+            </span>
+            <span className="kpi-l">dk günlük konuşma limiti</span>
           </div>
         </div>
       </section>
@@ -306,6 +395,7 @@ export default function MicsPage() {
         </div>
 
         <aside className="stack">
+          <MissionsPanel signedIn={s.signedIn} />
           <section className="panel factory">
             <img src="/mics/collection.png" alt="" />
             <h3>
@@ -389,6 +479,16 @@ export default function MicsPage() {
               </li>
               <li>
                 <Zap size={14} /> Enerji mikrofon sayına göre; {MICS.regenIntervalHours} saatte bir %{MICS.regenFraction * 100} dolar.
+              </li>
+              <li>
+                <CalendarClock size={14} /> Sıradan, Nadir, Ender: sadece görev saatlerinde. Destansı, Efsanevi: her zaman.
+              </li>
+              <li>
+                <Hourglass size={14} /> Günlük limit en iyi mikrofonuna göre:{" "}
+                {Object.entries(DAILY_TALK_MINUTES)
+                  .map(([q, m]) => `${QUALITIES[q as keyof typeof QUALITIES].label} ${m}`)
+                  .join(", ")}{" "}
+                dk.
               </li>
               <li>
                 <Clock size={14} /> Dayanıklılık %{MICS.durabilityPenaltyBelow}'nin altına düşünce kazanç azalır — tamir et.

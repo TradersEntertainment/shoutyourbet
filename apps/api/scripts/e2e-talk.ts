@@ -41,6 +41,8 @@ async function player(name: string) {
   await call("/debug/credit", { wallet, amount: 1000 });
   const mic = (await call("/mics/buy", { name }, session)).json;
   await call(`/mics/${mic.asset}/equip`, {}, session);
+  // Destansı: earns at any time (Sıradan would depend on the mission clock)
+  await call("/debug/mic-quality", { asset: mic.asset, quality: "epic" });
   return { wallet, session, name };
 }
 
