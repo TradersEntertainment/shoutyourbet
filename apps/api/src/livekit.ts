@@ -20,11 +20,13 @@ export async function createToken(opts: {
   name: string;
   canPublish: boolean;
   host: boolean;
+  wallet?: string;
+  gold?: boolean;
 }) {
   const at = new AccessToken(env.livekitKey, env.livekitSecret, {
     identity: opts.identity,
     name: opts.name,
-    metadata: JSON.stringify({ host: opts.host }),
+    metadata: JSON.stringify({ host: opts.host, wallet: opts.wallet, gold: opts.gold || undefined }),
     ttl: "6h",
   });
   at.addGrant({

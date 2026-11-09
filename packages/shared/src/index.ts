@@ -2,3 +2,4 @@ export * from "./instruments";
 export * from "./rooms";
 export * from "./sfx";
 export * from "./protocol";
+export * from "./economy";

@@ -7,3 +7,5 @@ dist
 *.log
 next-env.d.ts
 *.tsbuildinfo
+.secrets/
+scripts/token/localnet.json

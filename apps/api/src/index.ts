@@ -1,20 +1,37 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { randomUUID } from "node:crypto";
-import { INSTRUMENTS, instrumentById, type RoomInfo, type RoomMode, type Side } from "@syb/shared";
-import { env, livekitConfigured } from "./env.js";
+import { ECONOMY, INSTRUMENTS, SHOP, TOKEN, instrumentById, signInMessage, toBase, type RoomInfo, type RoomMode, type Side } from "@syb/shared";
+import { chainEnabled, economyEnabled, env, livekitConfigured } from "./env.js";
 import { broadcast, roomBus, createToken, kick, participantCounts, setCanPublish } from "./livekit.js";
 import { hub, startPrices } from "./prices/index.js";
 import { fireAlarm, startAlarms } from "./alarms.js";
 import { startScoring } from "./scoring.js";
 import { store } from "./store.js";
+import { shouts } from "./shouts.js";
+import { migrate, q } from "./db.js";
+import { isWallet, issueSession, newNonce, verifySignIn, walletOf } from "./auth.js";
+import { EconomyError, buyOnChain, buyWithBalance, claim, consume, ensureUser, history, isoWeek, me, owns, paySeason, startSeasonScheduler } from "./economy.js";
+import { onchainBalance, tokenInfo } from "./chain/solana.js";
 
 const app = Fastify({ logger: { level: "info" } });
 await app.register(cors, { origin: true });
 
 const clean = (s: unknown, max: number) => String(s ?? "").trim().slice(0, max);
 
-app.get("/health", async () => ({ ok: true, livekit: livekitConfigured(), priceMode: env.priceMode }));
+app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
+  if (err instanceof EconomyError) return reply.code(err.status).send({ error: err.message });
+  app.log.error(err);
+  return reply.code(err.statusCode ?? 500).send({ error: err.message || "server error" });
+});
+
+app.get("/health", async () => ({
+  ok: true,
+  livekit: livekitConfigured(),
+  priceMode: env.priceMode,
+  economy: economyEnabled(),
+  chain: chainEnabled(),
+}));
 
 app.get("/instruments", async () => INSTRUMENTS);
 
@@ -30,12 +47,15 @@ app.post<{ Body: { title?: string; instrumentId?: string; mode?: RoomMode; ident
     const { title, instrumentId, mode, identity, name } = req.body ?? {};
     if (!instrumentById(String(instrumentId))) return reply.code(400).send({ error: "unknown instrument" });
     if (!identity || !name) return reply.code(400).send({ error: "identity & name required" });
+    const wallet = economyEnabled() ? walletOf(req) : null;
+    const theme = wallet && (await owns(wallet, "theme-neon").catch(() => false)) ? "neon" : undefined;
     const room = store.createRoom({
       title: clean(title, 60) || "İsimsiz kaos",
       instrumentId: String(instrumentId),
       mode: mode === "stage" ? "stage" : "open",
       hostIdentity: clean(identity, 64),
       hostName: clean(name, 24),
+      theme,
     });
     return room; // { name, hostKey } — hostKey stays in the creator's browser
   },
@@ -50,7 +70,9 @@ app.post<{ Body: { room?: string; identity?: string; name?: string; hostKey?: st
   const name = clean(req.body?.name, 24) || "Anonim Balina";
   const host = store.isHost(room.name, identity, req.body?.hostKey);
   const canPublish = room.mode === "open" || host;
-  const token = await createToken({ room: room.name, identity, name, canPublish, host });
+  const wallet = economyEnabled() ? walletOf(req) : null;
+  const gold = wallet ? await owns(wallet, "name-gold").catch(() => false) : false;
+  const token = await createToken({ room: room.name, identity, name, canPublish, host, wallet: wallet ?? undefined, gold });
   return { token, url: env.livekitUrl, canPublish, host, room };
 });
 
@@ -126,15 +148,18 @@ app.post<{ Body: { room?: string; identity?: string; name?: string; side?: Side 
   if (b.side !== "LONG" && b.side !== "SHORT") return reply.code(400).send({ error: "side must be LONG or SHORT" });
   const identity = clean(b.identity, 64);
   const name = clean(b.name, 24) || "Anonim";
-  const key = `${room.name}:${identity}`;
+  const wallet = economyEnabled() ? walletOf(req) : null;
+  const key = `${room.name}:${wallet ?? identity}`;
   const now = Date.now();
   if (now - (lastShout.get(key) ?? 0) < 20_000) return reply.code(429).send({ error: "Sakin ol şampiyon, 20 sn bekle" });
   const price = hub.get(room.instrumentId)?.price;
   if (!price) return reply.code(503).send({ error: "no price yet" });
   lastShout.set(key, now);
-  const shout = store.addShout({
+  if (wallet) await ensureUser(wallet, name);
+  const shout = await shouts.add({
     room: room.name,
     identity,
+    wallet,
     name,
     instrumentId: room.instrumentId,
     side: b.side,
@@ -146,7 +171,70 @@ app.post<{ Body: { room?: string; identity?: string; name?: string; side?: Side 
   return { ok: true, shout };
 });
 
-app.get<{ Querystring: { room?: string } }>("/leaderboard", async (req) => store.leaderboard(req.query.room || undefined));
+app.get<{ Querystring: { room?: string } }>("/leaderboard", async (req) => shouts.leaderboard(req.query.room || undefined));
+
+// ---------- $SHOUT economy ----------
+const needEconomy = () => {
+  if (!economyEnabled()) throw new EconomyError("Ekonomi kapalı (DATABASE_URL / SESSION_SECRET)", 503);
+};
+const needWallet = (req: Parameters<typeof walletOf>[0]) => {
+  needEconomy();
+  const w = walletOf(req);
+  if (!w) throw new EconomyError("Önce cüzdanınla giriş yap", 401);
+  return w;
+};
+
+app.get("/economy", async () => ({
+  enabled: economyEnabled(),
+  token: { ...TOKEN, ...(tokenInfo() ?? {}) },
+  rules: ECONOMY,
+  shop: SHOP,
+}));
+
+app.get("/auth/nonce", async () => {
+  needEconomy();
+  return { nonce: await newNonce() };
+});
+app.post<{ Body: { wallet?: string; nonce?: string; signature?: string; nickname?: string } }>("/auth/wallet", async (req) => {
+  needEconomy();
+  const { wallet, nonce, signature, nickname } = req.body ?? {};
+  if (!isWallet(wallet) || !nonce || !signature) throw new EconomyError("eksik alan");
+  try {
+    await verifySignIn(wallet, String(nonce), String(signature));
+  } catch (e) {
+    throw new EconomyError((e as Error).message, 401);
+  }
+  await ensureUser(wallet, clean(nickname, 24) || `${wallet.slice(0, 4)}…${wallet.slice(-4)}`);
+  return { session: issueSession(wallet), me: await me(wallet), message: signInMessage(wallet, String(nonce)) };
+});
+
+app.get("/me", async (req) => {
+  const w = needWallet(req);
+  const out = await me(w);
+  return { ...out, onchain: chainEnabled() ? Number(await onchainBalance(w)) / 10 ** TOKEN.decimals : null };
+});
+app.get("/me/history", async (req) => history(needWallet(req)));
+app.post<{ Body: { amount?: number } }>("/claims", async (req) => {
+  const w = needWallet(req);
+  const amount = req.body?.amount;
+  return claim(w, typeof amount === "number" && amount > 0 ? amount : undefined);
+});
+app.post<{ Body: { itemId?: string; signature?: string } }>("/purchases", async (req) => {
+  const w = needWallet(req);
+  const itemId = String(req.body?.itemId ?? "");
+  return req.body?.signature ? buyOnChain(w, itemId, String(req.body.signature)) : buyWithBalance(w, itemId);
+});
+app.post<{ Body: { room?: string; text?: string; name?: string } }>("/megaphone", async (req) => {
+  const w = needWallet(req);
+  const room = store.getRoom(String(req.body?.room));
+  if (!room) throw new EconomyError("room not found", 404);
+  const text = clean(req.body?.text, 80);
+  if (!text) throw new EconomyError("boş mesaj");
+  await consume(w, "megaphone");
+  const until = Date.now() + 30_000;
+  await broadcast(room.name, { t: "MEGAPHONE", from: clean(req.body?.name, 24) || "Anonim", text, until });
+  return me(w);
+});
 
 // ---------- dev tools ----------
 if (env.devTools) {
@@ -157,11 +245,24 @@ if (env.devTools) {
     if (!price) return reply.code(404).send({ error: "unknown symbol / no price" });
     return fireAlarm(id, pct, price);
   });
+  /** dev: credit off-chain $SHOUT to a wallet (testing) */
+  app.post<{ Body: { wallet?: string; amount?: number } }>("/debug/credit", async (req) => {
+    needEconomy();
+    const { wallet, amount } = req.body ?? {};
+    if (!isWallet(wallet) || !amount) throw new EconomyError("wallet & amount");
+    await ensureUser(wallet, "test");
+    await q("insert into ledger (wallet, amount, reason, ref) values ($1,$2,'admin',$3)", [wallet, toBase(amount).toString(), `debug:${randomUUID()}`]);
+    return me(wallet);
+  });
+  /** dev: pay a season bonus for the current week right now */
+  app.post("/debug/season", async () => paySeason(isoWeek().start));
 }
 
+await migrate();
 startPrices();
 startAlarms();
 startScoring();
+if (economyEnabled()) startSeasonScheduler();
 
 await app.listen({ port: env.port, host: "0.0.0.0" });
-console.log(`[api] listening on :${env.port} (livekit=${livekitConfigured()}, prices=${env.priceMode})`);
+console.log(`[api] listening on :${env.port} (livekit=${livekitConfigured()}, prices=${env.priceMode}, economy=${economyEnabled()}, chain=${chainEnabled()})`);

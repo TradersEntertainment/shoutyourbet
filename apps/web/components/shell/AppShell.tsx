@@ -4,6 +4,7 @@ import { MarketProvider, useMarket } from "./market";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { CreateRoomModal } from "../CreateRoomModal";
+import { SessionProvider } from "@/lib/session";
 
 function ApiBanner() {
   const { apiDown } = useMarket();
@@ -15,6 +16,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [create, setCreate] = useState(false);
   return (
+    <SessionProvider>
     <MarketProvider>
       <div className="app">
         <TopBar onMenu={() => setDrawer((d) => !d)} />
@@ -29,5 +31,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {create && <CreateRoomModal onClose={() => setCreate(false)} />}
       </div>
     </MarketProvider>
+    </SessionProvider>
   );
 }

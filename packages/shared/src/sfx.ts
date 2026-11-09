@@ -17,3 +17,11 @@ export const SFX: SfxDef[] = [
 ];
 
 export const REACTIONS = ["🚀", "💀", "🐻", "🐂", "🤡", "🔥", "😂", "🩸"] as const;
+
+/** Unlocked by the "pack-degen" shop item. */
+export const SFX_PREMIUM: SfxDef[] = [
+  { id: "bell", label: "Zil", emoji: "🔔" },
+  { id: "gong", label: "Gong", emoji: "🥁" },
+  { id: "laugh", label: "Kahkaha", emoji: "🤣" },
+  { id: "drum", label: "Davul", emoji: "🪘" },
+];

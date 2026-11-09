@@ -1,15 +1,17 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { TrendingUp, TrendingDown, Siren } from "lucide-react";
+import { TrendingUp, TrendingDown, Siren, Megaphone, HandCoins } from "lucide-react";
 import { instrumentById, SFX, type DataMsg, type Side } from "@syb/shared";
 import { fmtPct, fmtPrice } from "@/lib/api";
 import { playSfx } from "@/lib/sfx";
 
 type Particle = { id: number; emoji: string; x: number; delay: number; size: number; drift: number };
 type Banner = { id: number; side: Side; from: string; price: number };
-type Toast = { id: number; from: string; side: Side; pct: number; points: number; quip: string };
+type Toast = { id: number; from: string; side: Side; pct: number; points: number; quip: string; reward?: number };
+type Tip = { id: number; from: string; to: string; amount: number };
+type Mega = { id: number; from: string; text: string; until: number };
 type Alarm = { id: number; name: string; dir: "up" | "down"; pct: number; price: number };
-export type FeedKind = "long" | "short" | "win" | "loss" | "alarm" | "sfx" | "hand";
+export type FeedKind = "long" | "short" | "win" | "loss" | "alarm" | "sfx" | "hand" | "tip" | "mega";
 export type FeedItem = { id: number; at: number; kind: FeedKind; who?: string; text: string };
 
 let seq = 0;
@@ -25,6 +27,8 @@ export function useChaos() {
   const [banners, setBanners] = useState<Banner[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [alarm, setAlarm] = useState<Alarm | null>(null);
+  const [tips, setTips] = useState<Tip[]>([]);
+  const [mega, setMega] = useState<Mega | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const events = useRef<number[]>([]);
   const [chaosLevel, setChaosLevel] = useState(0);
@@ -74,10 +78,14 @@ export function useChaos() {
       case "RESULT": {
         const good = m.pct > 0;
         playSfx(good ? "cash" : "rekt");
-        const t: Toast = { id: nextId(), from: m.from, side: m.side, pct: m.pct, points: m.points, quip: pick(good ? GOOD : BAD) };
+        const t: Toast = { id: nextId(), from: m.from, side: m.side, pct: m.pct, points: m.points, quip: pick(good ? GOOD : BAD), reward: m.reward };
         setToasts((x) => [...x, t].slice(-4));
         later(6500, () => setToasts((x) => x.filter((y) => y.id !== t.id)));
-        log({ kind: good ? "win" : "loss", who: m.from, text: `${m.side} ${fmtPct(m.pct)} · ${m.points > 0 ? "+" : ""}${m.points} puan · ${t.quip}` });
+        log({
+          kind: good ? "win" : "loss",
+          who: m.from,
+          text: `${m.side} ${fmtPct(m.pct)} · ${m.points > 0 ? "+" : ""}${m.points} puan${m.reward ? ` · +${m.reward} $SHOUT` : ""} · ${t.quip}`,
+        });
         break;
       }
       case "ALARM": {
@@ -89,13 +97,44 @@ export function useChaos() {
         log({ kind: "alarm", text: `${a.name} 1 dakikada ${fmtPct(m.pct)}` });
         break;
       }
+      case "TIP": {
+        playSfx("cash");
+        const tip: Tip = { id: nextId(), from: m.from, to: m.to, amount: m.amount };
+        setTips((x) => [tip, ...x].slice(0, 3));
+        later(4500, () => setTips((x) => x.filter((y) => y.id !== tip.id)));
+        log({ kind: "tip", who: m.from, text: `→ ${m.to} ${m.amount} $SHOUT bahşiş attı` });
+        const ps = Array.from({ length: 10 }, () => ({ id: nextId(), emoji: "🪙", x: 20 + Math.random() * 60, delay: Math.random() * 0.5, size: 22 + Math.random() * 16, drift: (Math.random() - 0.5) * 160 }));
+        setParticles((p) => [...p, ...ps].slice(-120));
+        later(3000, () => setParticles((p) => p.filter((x) => !ps.includes(x))));
+        break;
+      }
+      case "MEGAPHONE": {
+        playSfx("horn");
+        const mg: Mega = { id: nextId(), from: m.from, text: m.text, until: m.until };
+        setMega(mg);
+        later(Math.max(1000, m.until - Date.now()), () => setMega((cur) => (cur?.id === mg.id ? null : cur)));
+        log({ kind: "mega", who: m.from, text: `📢 ${m.text}` });
+        break;
+      }
       case "RAISE_HAND":
         if (m.up) log({ kind: "hand", who: m.from, text: "el kaldırdı" });
         break;
     }
   }, []);
 
-  return { particles, banners, toasts, alarm, feed, chaosLevel, handle };
+  return { particles, banners, toasts, alarm, feed, chaosLevel, tips, mega, handle };
+}
+
+export function MegaphoneBar({ mega }: { mega: ReturnType<typeof useChaos>["mega"] }) {
+  if (!mega) return null;
+  return (
+    <div key={mega.id} className="mega-bar" role="status">
+      <Megaphone size={18} />
+      <b>{mega.from}</b>
+      <span className="mega-text">{mega.text}</span>
+      <span className="mega-time" style={{ animationDuration: `${Math.max(1, mega.until - Date.now())}ms` }} />
+    </div>
+  );
 }
 
 export function ChaosOverlay({ chaos }: { chaos: ReturnType<typeof useChaos> }) {
@@ -124,6 +163,19 @@ export function ChaosOverlay({ chaos }: { chaos: ReturnType<typeof useChaos> }) 
           </div>
         ))}
       </div>
+      <div className="fx-banners tips" aria-live="polite">
+        {chaos.tips.map((t) => (
+          <div key={t.id} className="trade-note tip">
+            <span className="tn-icon">
+              <HandCoins size={18} />
+            </span>
+            <span className="tn-body">
+              <b>{t.from}</b> → <b>{t.to}</b> bahşiş
+            </span>
+            <span className="mono tn-price">{t.amount} $SHOUT</span>
+          </div>
+        ))}
+      </div>
       <div className="fx-toasts" aria-live="polite">
         {chaos.toasts.map((t) => (
           <div key={t.id} className={`pnl-toast ${t.pct > 0 ? "win" : "loss"}`}>
@@ -134,7 +186,10 @@ export function ChaosOverlay({ chaos }: { chaos: ReturnType<typeof useChaos> }) 
               <span className="mono pnl-pct">{fmtPct(t.pct)}</span>
             </div>
             <div className="pnl-bottom">
-              <span>{t.quip}</span>
+              <span>
+                {t.quip}
+                {t.reward ? <b className="reward"> · +{t.reward} $SHOUT</b> : null}
+              </span>
               <span className="mono">
                 {t.points > 0 ? "+" : ""}
                 {t.points} puan

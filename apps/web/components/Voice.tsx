@@ -10,8 +10,8 @@ import {
   useParticipants,
 } from "@livekit/components-react";
 import { ConnectionState, RemoteParticipant, type Participant } from "livekit-client";
-import { Mic, MicOff, Crown, ArrowUpCircle, ArrowDownCircle, UserX, Volume2, VolumeX, Users } from "lucide-react";
-import { DATA_TOPIC, decodeMsg, encodeMsg, type DataMsg } from "@syb/shared";
+import { Mic, MicOff, Crown, ArrowUpCircle, ArrowDownCircle, UserX, Volume2, VolumeX, Users, HandCoins } from "lucide-react";
+import { DATA_TOPIC, ECONOMY, decodeMsg, encodeMsg, type DataMsg, type ParticipantMeta } from "@syb/shared";
 
 /** Wires LiveKit data channel <-> our message handler. */
 export function DataBridge({ onMsg, sendRef }: { onMsg: (m: DataMsg) => void; sendRef: MutableRefObject<(m: DataMsg) => void> }) {
@@ -55,12 +55,28 @@ export function MicButton() {
 }
 
 type HostAction = (action: "speaker" | "mute" | "kick", target: string) => void;
+/** Send a $SHOUT tip to a participant's wallet; undefined when tipping isn't possible. */
+export type TipFn = (toWallet: string, toName: string, amount: number) => Promise<void>;
 
-function Seat({ p, host, onHost }: { p: Participant; host: boolean; onHost: HostAction }) {
+function TipMenu({ onPick, onClose }: { onPick: (n: number) => void; onClose: () => void }) {
+  return (
+    <div className="tip-menu" onMouseLeave={onClose}>
+      {ECONOMY.tipPresets.map((n) => (
+        <button key={n} onClick={() => onPick(n)}>
+          {n}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Seat({ p, host, onHost, onTip }: { p: Participant; host: boolean; onHost: HostAction; onTip?: TipFn }) {
   const speaking = useIsSpeaking(p);
   const [localMuted, setLocalMuted] = useState(false);
+  const [tipOpen, setTipOpen] = useState(false);
+  const [tipping, setTipping] = useState(false);
   const isRemote = p instanceof RemoteParticipant;
-  let meta: { host?: boolean } = {};
+  let meta: ParticipantMeta = {};
   try {
     meta = JSON.parse(p.metadata || "{}");
   } catch {}
@@ -72,7 +88,7 @@ function Seat({ p, host, onHost }: { p: Participant; host: boolean; onHost: Host
         {(p.name || "?").slice(0, 2).toUpperCase()}
         <span className={`seat-mic ${micOn ? "on" : ""}`}>{micOn ? <Mic size={10} /> : <MicOff size={10} />}</span>
       </div>
-      <div className="seat-name">
+      <div className={`seat-name ${meta.gold ? "gold-name" : ""}`}>
         {meta.host && <Crown size={11} className="gold" />}
         <span className="ellipsis">{p.name || p.identity.slice(0, 6)}</span>
       </div>
@@ -88,6 +104,23 @@ function Seat({ p, host, onHost }: { p: Participant; host: boolean; onHost: Host
           >
             {localMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
           </button>
+          {onTip && meta.wallet && (
+            <span className="tip-wrap">
+              <button title="$SHOUT bahşiş at" className={tipping ? "busy" : ""} disabled={tipping} onClick={() => setTipOpen((o) => !o)}>
+                <HandCoins size={13} />
+              </button>
+              {tipOpen && (
+                <TipMenu
+                  onClose={() => setTipOpen(false)}
+                  onPick={async (n) => {
+                    setTipOpen(false);
+                    setTipping(true);
+                    await onTip(meta.wallet!, p.name || "?", n).finally(() => setTipping(false));
+                  }}
+                />
+              )}
+            </span>
+          )}
           {host && (
             <>
               <button title={canSpeak ? "Sahneden indir" : "Sahneye al"} onClick={() => onHost(canSpeak ? "mute" : "speaker", p.identity)}>
@@ -104,7 +137,7 @@ function Seat({ p, host, onHost }: { p: Participant; host: boolean; onHost: Host
   );
 }
 
-export function Stage({ host, onHost }: { host: boolean; onHost: HostAction }) {
+export function Stage({ host, onHost, onTip }: { host: boolean; onHost: HostAction; onTip?: TipFn }) {
   const ps = useParticipants();
   const state = useConnectionState();
   const speakers = ps.filter((p) => p.permissions?.canPublish);
@@ -122,7 +155,7 @@ export function Stage({ host, onHost }: { host: boolean; onHost: HostAction }) {
       </header>
       <div className="seats">
         {speakers.map((p) => (
-          <Seat key={p.identity} p={p} host={host} onHost={onHost} />
+          <Seat key={p.identity} p={p} host={host} onHost={onHost} onTip={onTip} />
         ))}
       </div>
       {listeners.length > 0 && (
@@ -130,7 +163,7 @@ export function Stage({ host, onHost }: { host: boolean; onHost: HostAction }) {
           <div className="sub-title">Dinleyiciler · {listeners.length}</div>
           <div className="seats small">
             {listeners.map((p) => (
-              <Seat key={p.identity} p={p} host={host} onHost={onHost} />
+              <Seat key={p.identity} p={p} host={host} onHost={onHost} onTip={onTip} />
             ))}
           </div>
         </>

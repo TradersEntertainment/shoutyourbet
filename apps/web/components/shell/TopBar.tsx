@@ -7,6 +7,7 @@ import { fmtPrice, getNick, randomNick, setNick } from "@/lib/api";
 import { isSfxMuted, onSfxMuted, setSfxMuted } from "@/lib/sfx";
 import { useMarket } from "./market";
 import { Change } from "../Change";
+import { WalletButton } from "../wallet/WalletButton";
 
 function Ticker() {
   const { prices } = useMarket();
@@ -85,6 +86,7 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
       </Link>
       <Ticker />
       <div className="topbar-right">
+        <WalletButton />
         <button className="icon-btn" onClick={() => setSfxMuted(!muted)} title={muted ? "Efektleri aç" : "Efektleri kapat"}>
           {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
         </button>

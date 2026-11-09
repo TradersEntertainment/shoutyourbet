@@ -4,10 +4,20 @@ import type { LeaderRow, PriceTick, RoomInfo, RoomMode, Side } from "@syb/shared
 
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-async function req<T>(path: string, body?: unknown): Promise<T> {
+/** Wallet session token (set by lib/session.tsx) — sent so the API can attribute rewards. */
+export function sessionToken(): string | undefined {
+  try {
+    return JSON.parse(localStorage.getItem("syb.session") ?? "null")?.token ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function req<T>(path: string, body?: unknown): Promise<T> {
+  const token = sessionToken();
   const res = await fetch(`${API}${path}`, {
     method: body ? "POST" : "GET",
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: { ...(body ? { "content-type": "application/json" } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json().catch(() => ({}));

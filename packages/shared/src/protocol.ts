@@ -8,9 +8,11 @@ export type DataMsg =
   | { t: "SFX"; id: string; from: string }
   | { t: "REACT"; emoji: string; from: string }
   | { t: "RAISE_HAND"; from: string; identity: string; up: boolean }
+  | { t: "TIP"; from: string; to: string; amount: number; sig: string }
   // server -> room
   | { t: "SHOUT"; side: Side; price: number; from: string; identity: string; instrumentId: string }
-  | { t: "RESULT"; side: Side; pct: number; points: number; from: string; instrumentId: string }
+  | { t: "RESULT"; side: Side; pct: number; points: number; from: string; instrumentId: string; reward?: number }
+  | { t: "MEGAPHONE"; from: string; text: string; until: number }
   | { t: "ALARM"; instrumentId: string; dir: "up" | "down"; pct: number; price: number };
 
 const enc = new TextEncoder();
@@ -42,4 +44,6 @@ export interface LeaderRow {
   losses: number;
   /** worst single result in % */
   worstPct: number;
+  /** set when the trader has a linked wallet */
+  wallet?: string;
 }

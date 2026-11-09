@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Headphones, Plus, Mic2, Radio } from "lucide-react";
+import { Headphones, Plus, Mic2, Radio, LayoutGrid, Wallet, ShoppingBag } from "lucide-react";
 import { INSTRUMENTS, instrumentById, officialRoomName } from "@syb/shared";
 import { fmtPrice } from "@/lib/api";
 import { useMarket } from "./market";
@@ -15,6 +15,17 @@ export function Sidebar({ onCreate, onNavigate }: { onCreate: () => void; onNavi
   const community = rooms.filter((r) => !r.official);
   return (
     <nav className="sidebar" aria-label="Odalar">
+      <div className="side-nav">
+        {[
+          { href: "/", label: "Lobi", icon: <LayoutGrid size={16} /> },
+          { href: "/wallet", label: "Cüzdan", icon: <Wallet size={16} /> },
+          { href: "/shop", label: "Mağaza", icon: <ShoppingBag size={16} /> },
+        ].map((l) => (
+          <Link key={l.href} href={l.href} onClick={onNavigate} className={`side-link ${path === l.href ? "active" : ""}`}>
+            {l.icon} {l.label}
+          </Link>
+        ))}
+      </div>
       <div className="side-section">
         <div className="side-title">Piyasa odaları</div>
         {INSTRUMENTS.map((i) => {

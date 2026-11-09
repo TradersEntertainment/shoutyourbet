@@ -1,14 +1,19 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
-import { TrendingUp, TrendingDown, Hand, Mic2, Radio, Activity, LineChart, ListOrdered, WifiOff, Siren, Zap, Trophy, Megaphone } from "lucide-react";
-import { instrumentById, REACTIONS, SFX, type DataMsg, type RoomInfo, type Side } from "@syb/shared";
-import { API, api, fmtPrice, getHostKey } from "@/lib/api";
+import { TrendingUp, TrendingDown, Hand, Mic2, Radio, Activity, LineChart, ListOrdered, WifiOff, Siren, Zap, Trophy, Megaphone, HandCoins, Send } from "lucide-react";
+import Link from "next/link";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { instrumentById, REACTIONS, SFX, SFX_PREMIUM, type DataMsg, type RoomInfo, type Side } from "@syb/shared";
+import { API, api, fmtPrice, getHostKey, req } from "@/lib/api";
+import { useSession } from "@/lib/session";
+import { sendShout, walletErr } from "@/lib/chain";
 import { preloadSfx } from "@/lib/sfx";
-import { ChaosOverlay, useChaos, type FeedItem } from "./chaos";
+import { ChaosOverlay, MegaphoneBar, useChaos, type FeedItem } from "./chaos";
 import { TVChart } from "./TVChart";
 import { Leaderboard } from "./Leaderboard";
-import { DataBridge, MicButton, Stage } from "./Voice";
+import { DataBridge, MicButton, Stage, type TipFn } from "./Voice";
+import { ShoutCoin } from "./wallet/WalletButton";
 import { InstrumentBadge } from "./InstrumentBadge";
 import { Change } from "./Change";
 import { useMarket } from "./shell/market";
@@ -40,6 +45,8 @@ const FEED_ICON: Record<FeedItem["kind"], React.ReactNode> = {
   alarm: <Siren size={14} className="gold" />,
   sfx: <Megaphone size={14} className="muted" />,
   hand: <Hand size={14} className="muted" />,
+  tip: <HandCoins size={14} className="gold" />,
+  mega: <Megaphone size={14} className="gold" />,
 };
 
 function Feed({ items }: { items: FeedItem[] }) {
@@ -74,8 +81,14 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
   const [tab, setTab] = useState<"chart" | "feed">("chart");
   const now = useNow(until.shout > Date.now() || until.sfx > Date.now());
   const hostKey = getHostKey(room.name);
+  const session = useSession();
+  const { connection } = useConnection();
+  const walletCtx = useWallet();
+  const [megaText, setMegaText] = useState("");
+  const megaLeft = session.me?.inventory.megaphone ?? 0;
+  const premium = session.owns("pack-degen");
 
-  useEffect(() => preloadSfx([...SFX.map((s) => s.id), "long", "short", "siren", "cash", "rekt"]), []);
+  useEffect(() => preloadSfx([...SFX.map((s) => s.id), ...SFX_PREMIUM.map((s) => s.id), "long", "short", "siren", "cash", "rekt"]), []);
 
   const onMsg = useCallback(
     (m: DataMsg) => {
@@ -123,6 +136,32 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
     emit({ t: "SFX", id, from: me.name });
   };
 
+  const tip: TipFn | undefined =
+    session.signedIn && session.economy?.token.mint
+      ? async (toWallet, toName, amount) => {
+          if (toWallet === session.wallet) return flash("Kendine bahşiş atamazsın 🙂");
+          try {
+            const sig = await sendShout(connection, walletCtx, session.economy!.token.mint!, toWallet, amount);
+            emit({ t: "TIP", from: me.name, to: toName, amount, sig });
+            void session.refresh();
+          } catch (e) {
+            flash(walletErr(e));
+          }
+        }
+      : undefined;
+
+  const sendMega = async () => {
+    const text = megaText.trim();
+    if (!text) return;
+    try {
+      await req("/megaphone", { room: room.name, text, name: me.name });
+      setMegaText("");
+      void session.refresh();
+    } catch (e) {
+      flash((e as Error).message);
+    }
+  };
+
   const hostAction = async (action: "speaker" | "mute" | "kick", target: string) => {
     if (!hostKey) return;
     try {
@@ -144,7 +183,7 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
   const horizonMin = 15;
 
   const body = (
-    <div className={`room ${chaos.alarm ? `shake` : ""}`}>
+    <div className={`room ${chaos.alarm ? `shake` : ""} ${room.theme ? `theme-${room.theme}` : ""}`}>
       <ChaosOverlay chaos={chaos} />
 
       <div className="room-bar">
@@ -185,11 +224,13 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
         </div>
       </div>
 
+      <MegaphoneBar mega={chaos.mega} />
+
       <div className="room-grid">
         <div className="room-center">
           {conn ? (
             <>
-              <div className="o-stage"><Stage host={conn.host} onHost={hostAction} /></div>
+              <div className="o-stage"><Stage host={conn.host} onHost={hostAction} onTip={tip} /></div>
               {conn.host && Object.keys(hands).length > 0 && (
                 <section className="panel">
                   <header className="panel-head">
@@ -279,6 +320,31 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
               <span style={{ width: `${(shoutLeft / SHOUT_COOLDOWN) * 100}%` }} />
             </div>
             {shoutLeft > 0 && <div className="muted small center-t">Sakin ol şampiyon · {Math.ceil(shoutLeft / 1000)} sn</div>}
+            {session.economy?.enabled &&
+              (session.signedIn ? (
+                <div className="earn-line">
+                  <ShoutCoin size={14} /> Doğru tahmin puan başına {session.economy.rules.rewardPerPoint} $SHOUT kazandırır
+                </div>
+              ) : (
+                <Link href="/wallet" className="earn-line cta">
+                  <ShoutCoin size={14} /> Cüzdan bağla, doğru tahminlerden $SHOUT kazan →
+                </Link>
+              ))}
+            {megaLeft > 0 && (
+              <form
+                className="mega-compose"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void sendMega();
+                }}
+              >
+                <Megaphone size={15} className="gold" />
+                <input value={megaText} onChange={(e) => setMegaText(e.target.value)} maxLength={80} placeholder={`Megafonla bağır (${megaLeft} hak)`} />
+                <button className="icon-btn sm" aria-label="Gönder">
+                  <Send size={14} />
+                </button>
+              </form>
+            )}
             {notice && <div className="notice">{notice}</div>}
           </section>
 
@@ -290,7 +356,7 @@ export function RoomView({ room, me, conn }: { room: RoomInfo; me: { identity: s
               {sfxLeft > 0 && <span className="muted small mono">{(sfxLeft / 1000).toFixed(1)}s</span>}
             </header>
             <div className="sfx-grid">
-              {SFX.map((s) => (
+              {[...SFX, ...(premium ? SFX_PREMIUM : [])].map((s) => (
                 <button key={s.id} className="sfx-btn" disabled={sfxLeft > 0} onClick={() => sfx(s.id)}>
                   <span className="sfx-emoji">{s.emoji}</span>
                   <span>{s.label}</span>
